@@ -3,10 +3,15 @@ const mongoose = require("mongoose");
 
 const connectDB = async () => {
   try {
-    await mongoose.connect(process.env.MONGO_URI || "mongodb://localhost:27017/event-recommender", {
+    const uri = "mongodb://127.0.0.1:27017/event-recommender"; // force IPv4
+
+    console.log("Connecting to:", uri);
+
+    await mongoose.connect(uri, {
       useNewUrlParser: true,
       useUnifiedTopology: true,
     });
+
     console.log("✅ MongoDB connected");
   } catch (err) {
     console.error("❌ MongoDB connection error:", err.message);
