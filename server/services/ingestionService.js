@@ -22,8 +22,8 @@ async function fetchTicketmasterEvents() {
   const url = "https://app.ticketmaster.com/discovery/v2/events.json";
   const params = {
     apikey: process.env.TICKETMASTER_API_KEY,
-    city: "Melbourne",
-    countryCode: "AU"
+    city: "Birmingham",
+    countryCode: "UK"
   };
 
   const res = await axios.get(url, { params });

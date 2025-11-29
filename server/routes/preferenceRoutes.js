@@ -16,10 +16,11 @@ router.get("/", auth, async (req, res, next) => {
 // PUT /api/preferences
 router.put("/", auth, async (req, res, next) => {
   try {
-    const { categories, maxDistanceKm, priceMin, priceMax, startDate, endDate } = req.body;
+    const { categories, maxDistanceKm,location,   priceMin, priceMax, startDate, endDate } = req.body;
 
     const prefs = {
       ...(categories && { categories }),
+        ...(location && { location }), 
       ...(maxDistanceKm !== undefined && { maxDistanceKm }),
       ...(priceMin !== undefined && { priceMin }),
       ...(priceMax !== undefined && { priceMax }),

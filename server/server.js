@@ -16,26 +16,19 @@ const app = express();
 connectDB();
 
 // Middleware
-const corsOptions = {
-  origin: "http://localhost:5173", // frontend origin
-  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization"],
-  credentials: false // or true if you ever use cookies
-};
-
-app.use(cors(corsOptions)); 
-// This line is IMPORTANT for preflight:
-// app.options("*", cors(corsOptions));
-
+app.use(
+  cors({
+    origin: "http://localhost:5173",
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+    // credentials: false, // don't need this unless using cookies
+  })
+);
 // Body parser
 app.use(express.json());
 
-// Optional logger to see requests
-// app.use((req, res, next) => {
-//   console.log(`${req.method} ${req.url}`);
-//   next();
-// });
-// Health check
+
+
 
 // Routes
 app.use("/api/auth", authRoutes);
@@ -49,9 +42,9 @@ app.get("/", (req, res) => {
   res.json({ status: "OK", message: "Event recommender backend running" });
 });
 
-// Error handling
+// // Error handling
 app.use(notFound);
 app.use(errorHandler);
 
-const PORT =  5000;
+const PORT =  8000;
 app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));

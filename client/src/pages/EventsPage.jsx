@@ -1,0 +1,245 @@
+// src/pages/Search.jsx (or EventsPage.jsx)
+import React, { useEffect, useState, useCallback } from "react";
+import EventCard from "../components/EventCard";
+
+const API_BASE_URL = "http://localhost:8000"; // ⬅️ change if your backend is on 5000
+
+const CATEGORY_OPTIONS = [
+  { value: "All", label: "All categories" },
+  { value: "Music", label: "Music" },
+  { value: "Sports", label: "Sports" },
+  { value: "Arts & Theatre", label: "Arts & Theatre" },
+  { value: "Family", label: "Family" },
+  { value: "Film", label: "Film" },
+  { value: "Business", label: "Business" },
+];
+
+const COUNTRY_OPTIONS = [
+  { value: "World", label: "🌍 World" },
+  { value: "AU", label: "🇦🇺 Australia" },
+  { value: "US", label: "🇺🇸 United States" },
+  { value: "GB", label: "🇬🇧 United Kingdom" },
+  { value: "CA", label: "🇨🇦 Canada" },
+  { value: "DE", label: "🇩🇪 Germany" },
+  { value: "FR", label: "🇫🇷 France" },
+];
+
+export default function EventsPage() {
+  const [q, setQ] = useState("");              // ✅ define q
+  const [category, setCategory] = useState("All");
+  const [country, setCountry] = useState("World"); // 🌍 default
+  const [events, setEvents] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [source] = useState("external"); // keep if you plan to support "internal" later
+  const [error, setError] = useState("");
+
+  const fetchEvents = useCallback(
+    async ({ trigger = "initial" } = {}) => {
+      try {
+        setLoading(true);
+        setError("");
+
+        let url;
+        const params = new URLSearchParams();
+
+        if (source === "external") {
+          url = `${API_BASE_URL}/api/events/external`;
+          if (q.trim()) params.set("q", q.trim());
+          if (category && category !== "All") params.set("category", category);
+          if (country && country !== "World") params.set("country", country);
+        } else {
+          url = `${API_BASE_URL}/api/events/search`;
+          if (q.trim()) params.set("q", q.trim());
+          if (category && category !== "All") params.set("category", category);
+        }
+
+        const fullUrl = `${url}${params.toString() ? `?${params.toString()}` : ""}`;
+        console.log("🔎 Fetching events:", { fullUrl, trigger });
+
+        const res = await fetch(fullUrl);
+        if (!res.ok) {
+          const text = await res.text();
+          console.error("Backend error:", res.status, text);
+          throw new Error(`Request failed with status ${res.status}`);
+        }
+
+        const data = await res.json();
+        const list = source === "external" ? data.events || [] : data || [];
+        setEvents(list);
+      } catch (err) {
+        console.error("Error fetching events:", err);
+        setError("Could not load events. Please try again.");
+      } finally {
+        setLoading(false);
+      }
+    },
+    [source, q, category, country] // ✅ include country here
+  );
+
+  // initial load + whenever filters change (category, country, q via dependency)
+  useEffect(() => {
+    fetchEvents({ trigger: "filter-change" });
+  }, [fetchEvents]);
+
+  const handleCategoryChange = (e) => {
+    setCategory(e.target.value);
+  };
+
+  const handleCountryChange = (e) => {
+    setCountry(e.target.value);
+  };
+
+  const handleSearchSubmit = (e) => {
+    e.preventDefault();
+    fetchEvents({ trigger: "text-search" });
+  };
+
+  return (
+    <div className="min-h-screen bg-slate-50">
+      <div className="mx-auto max-w-6xl px-4 py-8">
+        <header className="mb-8 flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+          <div>
+            <h1 className="text-3xl font-bold tracking-tight text-slate-900">
+              Discover Events
+            </h1>
+            <p className="mt-1 text-sm text-slate-600">
+              Search across your own dataset and live events from Ticketmaster
+              &amp; Eventbrite.
+            </p>
+          </div>
+        </header>
+
+        {/* Filters */}
+        <section className="mb-6 rounded-2xl border border-slate-200 bg-white/90 p-4 shadow-sm">
+          <form
+            onSubmit={handleSearchSubmit}
+            className="flex flex-col gap-3 md:flex-row md:items-center md:flex-wrap"
+          >
+            {/* Search */}
+            <div className="flex-1 min-w-[220px]">
+              <label
+                htmlFor="search"
+                className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500"
+              >
+                Search by keyword
+              </label>
+              <div className="flex rounded-xl border border-slate-200 bg-slate-50/60 px-3 py-2 focus-within:border-indigo-500 focus-within:ring-1 focus-within:ring-indigo-500">
+                <input
+                  id="search"
+                  type="text"
+                  value={q}
+                  onChange={(e) => setQ(e.target.value)}
+                  placeholder="e.g. music festival, coding meetup, comedy show..."
+                  className="block w-full bg-transparent text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none"
+                />
+              </div>
+            </div>
+
+            {/* Category */}
+            <div className="w-full md:w-56">
+              <label
+                htmlFor="category"
+                className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500"
+              >
+                Category
+              </label>
+              <select
+                id="category"
+                value={category}
+                onChange={handleCategoryChange}
+                className="block w-full rounded-xl border border-slate-200 bg-slate-50/60 px-3 py-2 text-sm text-slate-900 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+              >
+                {CATEGORY_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+              <p className="mt-1 text-[11px] text-slate-400">
+                Category updates results instantly.
+              </p>
+            </div>
+
+            {/* Country */}
+            <div className="w-full md:w-56">
+              <label
+                htmlFor="country"
+                className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500"
+              >
+                Country
+              </label>
+              <select
+                id="country"
+                value={country}
+                onChange={handleCountryChange}
+                className="block w-full rounded-xl border border-slate-200 bg-slate-50/60 px-3 py-2 text-sm text-slate-900 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+              >
+                {COUNTRY_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+              <p className="mt-1 text-[11px] text-slate-400">
+                World = events from any country.
+              </p>
+            </div>
+
+            {/* Search button */}
+            <div className="flex w-full items-end justify-start md:w-auto">
+              <button
+                type="submit"
+                className="inline-flex w-full items-center justify-center gap-1 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-1 md:w-auto"
+              >
+                🔍 Search
+              </button>
+            </div>
+          </form>
+        </section>
+
+        {/* Results */}
+        <section>
+          {error && (
+            <div className="mb-4 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+              {error}
+            </div>
+          )}
+
+          {loading ? (
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              {Array.from({ length: 6 }).map((_, i) => (
+                <div
+                  key={i}
+                  className="animate-pulse rounded-2xl border border-slate-200 bg-white/80 shadow-sm"
+                >
+                  <div className="aspect-[16/9] w-full bg-slate-200" />
+                  <div className="space-y-3 p-4">
+                    <div className="h-4 w-3/4 rounded bg-slate-200" />
+                    <div className="h-3 w-1/2 rounded bg-slate-200" />
+                    <div className="h-3 w-2/3 rounded bg-slate-200" />
+                    <div className="h-8 w-24 rounded-full bg-slate-200" />
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : events.length === 0 ? (
+            <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-white/70 px-6 py-12 text-center">
+              <p className="text-sm font-medium text-slate-900">
+                No events found.
+              </p>
+              <p className="mt-1 text-xs text-slate-500">
+                Try a different keyword, category, or country.
+              </p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              {events.map((event) => (
+                <EventCard key={event.id || event._id} event={event} />
+              ))}
+            </div>
+          )}
+        </section>
+      </div>
+    </div>
+  );
+}

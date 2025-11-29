@@ -1,14 +1,18 @@
 // routes/eventRoutes.js
 const express = require("express");
+const axios = require("axios");
 const auth = require("../middleware/auth");
 const Event = require("../models/Event");
 const recommendationService = require("../services/recommendationService");
 
 const router = express.Router();
 
+const TICKETMASTER_API_KEY = process.env.TICKETMASTER_API_KEY;
+const EVENTBRITE_TOKEN = process.env.EVENTBRITE_TOKEN;
 // GET /api/events/search
 // query params: q, category, minPrice, maxPrice, startDate, endDate
 router.get("/search", async (req, res, next) => {
+  console.log("Search endpoint hit with query:", req.query);
   try {
     const { q, category, minPrice, maxPrice, startDate, endDate } = req.query;
 
@@ -41,28 +45,151 @@ router.get("/search", async (req, res, next) => {
     next(err);
   }
 });
+// ✅ NEW: GET /api/events/external  (Ticketmaster + Eventbrite + country filter)
+router.get("/external", async (req, res) => {
+  const { q, category, country } = req.query; // 👈 now reading country
 
+  let tmEvents = [];
+  let ebEvents = [];
+
+  // ---------- Ticketmaster ----------
+  if (TICKETMASTER_API_KEY) {
+    try {
+      const tmRes = await axios.get(
+        "https://app.ticketmaster.com/discovery/v2/events.json",
+        {
+          params: {
+            apikey: TICKETMASTER_API_KEY,
+            keyword: q || undefined,
+            classificationName:
+              category && category !== "All" ? category : undefined,
+            size: 20,
+            // 🌍 World = no countryCode => global
+            countryCode:
+              country && country !== "World" ? country : undefined,
+          },
+        }
+      );
+
+      const raw = tmRes.data?._embedded?.events || [];
+      tmEvents = raw.map((e) => {
+        const venue = e._embedded?.venues?.[0];
+        return {
+          id: `tm_${e.id}`,
+          source: "ticketmaster",
+          title: e.name,
+          url: e.url,
+          date: e.dates?.start?.localDate || null,
+          time: e.dates?.start?.localTime || null,
+          venue: venue?.name || "",
+          city: venue?.city?.name || "",
+          country: venue?.country?.name || "",
+          image: e.images?.[0]?.url || null,
+          category: e.classifications?.[0]?.segment?.name || "Event",
+          score: "High match",
+        };
+      });
+    } catch (err) {
+      console.error(
+        "❌ Ticketmaster error:",
+        err.response?.status,
+        err.response?.data || err.message
+      );
+      // don’t throw → just skip Ticketmaster
+    }
+  } else {
+    console.warn("⚠️ TICKETMASTER_API_KEY not set. Skipping Ticketmaster.");
+  }
+
+  // ---------- Eventbrite ----------
+  if (EVENTBRITE_TOKEN) {
+    try {
+      const ebParams = {
+        q: q || undefined,
+        expand: "venue",
+        page_size: 20,
+      };
+
+      // You can decide how to use country here. For now:
+      // - If specific country selected, use it as location.address
+      // - Otherwise default to Melbourne
+      ebParams["location.address"] =
+        country && country !== "World" ? country : "Melbourne";
+
+      const ebRes = await axios.get(
+        "https://www.eventbriteapi.com/v3/events/search/",
+        {
+          headers: {
+            Authorization: `Bearer ${EVENTBRITE_TOKEN}`,
+          },
+          params: ebParams,
+        }
+      );
+
+      const raw = ebRes.data?.events || [];
+      ebEvents = raw.map((e) => {
+        const venue = e.venue;
+        const start = e.start || {};
+        return {
+          id: `eb_${e.id}`,
+          source: "eventbrite",
+          title: e.name?.text || "Untitled Event",
+          url: e.url,
+          date: start.local?.slice(0, 10) || null,
+          time: start.local?.slice(11, 16) || null,
+          venue: venue?.name || "",
+          city: venue?.address?.city || "",
+          country: venue?.address?.country || "",
+          image: e.logo?.url || null,
+          category: e.category_id || "Event",
+          score: "Medium match",
+        };
+      });
+    } catch (err) {
+      console.error(
+        "❌ Eventbrite error:",
+        err.response?.status,
+        err.response?.data || err.message
+      );
+      // again, don't throw – just skip Eventbrite
+    }
+  } else {
+    console.warn("⚠️ EVENTBRITE_TOKEN not set. Skipping Eventbrite.");
+  }
+
+  // ---------- Merge & return ----------
+  const merged = [...tmEvents, ...ebEvents].sort((a, b) => {
+    if (!a.date || !b.date) return 0;
+    return new Date(a.date) - new Date(b.date);
+  });
+
+  return res.json({ events: merged });
+});
+
+// GET /api/events/recommend/me
+router.get("/recommend/me", auth, async (req, res, next) => {
+  try {
+    const limit = Number(req.query.limit) || 20;
+    const recommendations = await recommendationService.recommendForUser(
+      req.user,
+      limit
+    );
+    res.json(recommendations);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ⚠️ KEEP THIS LAST – catches /:id
 // GET /api/events/:id
 router.get("/:id", async (req, res, next) => {
   try {
     const event = await Event.findById(req.params.id).lean();
     if (!event) return res.status(404).json({ message: "Event not found" });
 
-    // increment clickCount in background-ish
     Event.findByIdAndUpdate(event._id, { $inc: { clickCount: 1 } }).catch(() => {});
 
     res.json(event);
-  } catch (err) {
-    next(err);
-  }
-});
-
-// GET /api/events/recommend
-router.get("/recommend/me", auth, async (req, res, next) => {
-  try {
-    const limit = Number(req.query.limit) || 20;
-    const recommendations = await recommendationService.recommendForUser(req.user, limit);
-    res.json(recommendations);
   } catch (err) {
     next(err);
   }

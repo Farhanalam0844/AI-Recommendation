@@ -3,7 +3,8 @@ const mongoose = require("mongoose");
 
 const preferenceSchema = new mongoose.Schema(
   {
-    categories: [String],          // e.g. ["Music", "Comedy"]
+    categories: [String],    
+    location: { type: String },        // e.g. ["Music", "Comedy"]
     maxDistanceKm: { type: Number, default: 50 },
     priceMin: { type: Number, default: 0 },
     priceMax: { type: Number, default: 999999 },
