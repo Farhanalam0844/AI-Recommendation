@@ -167,6 +167,7 @@ router.get("/external", async (req, res) => {
 });
 
 // GET /api/events/recommend/me
+
 router.get("/recommend/me", auth, async (req, res, next) => {
   try {
     const limit = Number(req.query.limit) || 20;
@@ -179,6 +180,7 @@ router.get("/recommend/me", auth, async (req, res, next) => {
     next(err);
   }
 });
+
 
 // ⚠️ KEEP THIS LAST – catches /:id
 // GET /api/events/:id

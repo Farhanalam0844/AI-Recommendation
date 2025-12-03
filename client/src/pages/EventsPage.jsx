@@ -1,8 +1,9 @@
 // src/pages/Search.jsx (or EventsPage.jsx)
 import React, { useEffect, useState, useCallback } from "react";
 import EventCard from "../components/EventCard";
+import api from "../services/api"; // ✅ NEW: axios instance with auth
 
-const API_BASE_URL = "http://localhost:8000"; // ⬅️ change if your backend is on 5000
+const API_BASE_URL = "http://localhost:8000";
 
 const CATEGORY_OPTIONS = [
   { value: "All", label: "All categories" },
@@ -25,14 +26,16 @@ const COUNTRY_OPTIONS = [
 ];
 
 export default function EventsPage() {
-  const [q, setQ] = useState("");              // ✅ define q
+  const [mode, setMode] = useState("ai"); // "ai" | "live" ✅ NEW
+  const [q, setQ] = useState("");
   const [category, setCategory] = useState("All");
-  const [country, setCountry] = useState("World"); // 🌍 default
+  const [country, setCountry] = useState("World");
   const [events, setEvents] = useState([]);
   const [loading, setLoading] = useState(false);
-  const [source] = useState("external"); // keep if you plan to support "internal" later
+  const [source] = useState("external");
   const [error, setError] = useState("");
 
+  // ------------ LIVE SEARCH (existing behaviour) ------------
   const fetchEvents = useCallback(
     async ({ trigger = "initial" } = {}) => {
       try {
@@ -53,7 +56,9 @@ export default function EventsPage() {
           if (category && category !== "All") params.set("category", category);
         }
 
-        const fullUrl = `${url}${params.toString() ? `?${params.toString()}` : ""}`;
+        const fullUrl = `${url}${
+          params.toString() ? `?${params.toString()}` : ""
+        }`;
         console.log("🔎 Fetching events:", { fullUrl, trigger });
 
         const res = await fetch(fullUrl);
@@ -73,13 +78,67 @@ export default function EventsPage() {
         setLoading(false);
       }
     },
-    [source, q, category, country] // ✅ include country here
+    [source, q, category, country]
   );
 
-  // initial load + whenever filters change (category, country, q via dependency)
+  // ------------ AI RECOMMENDATIONS (NEW) ------------
+  const fetchRecommended = useCallback(async () => {
+    try {
+      setLoading(true);
+      setError("");
+
+      // uses axios instance with Authorization header
+      const res = await api.get("/events/recommend/me", {
+        params: { limit: 30 },
+      });
+
+      const data = res.data || [];
+
+      // Map backend event (Mongo) -> EventCard shape
+      const mapped = data.map((e) => {
+        const dt = e.start_utc ? new Date(e.start_utc) : null;
+        const iso = dt ? dt.toISOString() : null;
+        const date = iso ? iso.slice(0, 10) : null;
+        const time = iso ? iso.slice(11, 16) : null;
+
+        return {
+          ...e,
+          id: e._id,
+          // EventCard fields:
+          title: e.title,
+          date,
+          time,
+          venue: e.venue_name,
+          city: e.city || "",
+          country: e.country || "",
+          image: e.image || null, // in case you later add image to DB
+          source: "internal",
+          category: e.category,
+          // show AI score to help explain recommendations
+          score:
+            typeof e._score === "number"
+              ? `AI score: ${e._score.toFixed(2)}`
+              : undefined,
+        };
+      });
+
+      setEvents(mapped);
+    } catch (err) {
+      console.error("Error fetching recommendations:", err);
+      setError("Could not load AI recommendations. Please try again.");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  // ------------ useEffect to load depending on mode ------------
   useEffect(() => {
-    fetchEvents({ trigger: "filter-change" });
-  }, [fetchEvents]);
+    if (mode === "ai") {
+      fetchRecommended();
+    } else {
+      fetchEvents({ trigger: "filter-change" });
+    }
+  }, [mode, fetchEvents, fetchRecommended]);
 
   const handleCategoryChange = (e) => {
     setCategory(e.target.value);
@@ -91,110 +150,165 @@ export default function EventsPage() {
 
   const handleSearchSubmit = (e) => {
     e.preventDefault();
-    fetchEvents({ trigger: "text-search" });
+    if (mode === "live") {
+      fetchEvents({ trigger: "text-search" });
+    } else {
+      // in AI mode, search bar is not used (recommendations based on prefs)
+      fetchRecommended();
+    }
   };
 
   return (
     <div className="min-h-screen bg-slate-50">
       <div className="mx-auto max-w-6xl px-4 py-8">
-        <header className="mb-8 flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+        {/* Header */}
+        <header className="mb-6 flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
           <div>
             <h1 className="text-3xl font-bold tracking-tight text-slate-900">
-              Discover Events
+              {mode === "ai" ? "AI-Recommended Events" : "Discover Events"}
             </h1>
             <p className="mt-1 text-sm text-slate-600">
-              Search across your own dataset and live events from Ticketmaster
-              &amp; Eventbrite.
+              {mode === "ai"
+                ? "Personalised events based on your saved preferences, location, and feedback."
+                : "Search across live events from Ticketmaster & Eventbrite."}
             </p>
+          </div>
+
+          {/* Mode toggle */}
+          <div className="inline-flex rounded-full border border-slate-200 bg-white p-1 text-xs font-medium shadow-sm">
+            <button
+              type="button"
+              onClick={() => setMode("ai")}
+              className={`px-3 py-1.5 rounded-full ${
+                mode === "ai"
+                  ? "bg-indigo-600 text-white shadow"
+                  : "text-slate-600"
+              }`}
+            >
+              AI Recommended
+            </button>
+            <button
+              type="button"
+              onClick={() => setMode("live")}
+              className={`px-3 py-1.5 rounded-full ${
+                mode === "live"
+                  ? "bg-indigo-600 text-white shadow"
+                  : "text-slate-600"
+              }`}
+            >
+              Live Search
+            </button>
           </div>
         </header>
 
-        {/* Filters */}
+        {/* Filters / Info */}
         <section className="mb-6 rounded-2xl border border-slate-200 bg-white/90 p-4 shadow-sm">
-          <form
-            onSubmit={handleSearchSubmit}
-            className="flex flex-col gap-3 md:flex-row md:items-center md:flex-wrap"
-          >
-            {/* Search */}
-            <div className="flex-1 min-w-[220px]">
-              <label
-                htmlFor="search"
-                className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500"
-              >
-                Search by keyword
-              </label>
-              <div className="flex rounded-xl border border-slate-200 bg-slate-50/60 px-3 py-2 focus-within:border-indigo-500 focus-within:ring-1 focus-within:ring-indigo-500">
-                <input
-                  id="search"
-                  type="text"
-                  value={q}
-                  onChange={(e) => setQ(e.target.value)}
-                  placeholder="e.g. music festival, coding meetup, comedy show..."
-                  className="block w-full bg-transparent text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none"
-                />
-              </div>
-            </div>
-
-            {/* Category */}
-            <div className="w-full md:w-56">
-              <label
-                htmlFor="category"
-                className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500"
-              >
-                Category
-              </label>
-              <select
-                id="category"
-                value={category}
-                onChange={handleCategoryChange}
-                className="block w-full rounded-xl border border-slate-200 bg-slate-50/60 px-3 py-2 text-sm text-slate-900 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
-              >
-                {CATEGORY_OPTIONS.map((opt) => (
-                  <option key={opt.value} value={opt.value}>
-                    {opt.label}
-                  </option>
-                ))}
-              </select>
-              <p className="mt-1 text-[11px] text-slate-400">
-                Category updates results instantly.
+          {mode === "ai" ? (
+            <div className="flex flex-col gap-2 text-sm text-slate-700">
+              <p>
+                These recommendations use your{" "}
+                <span className="font-semibold">Preferences</span> (categories,
+                distance, etc.) and feedback (ratings, clicks, bookmarks).
               </p>
-            </div>
-
-            {/* Country */}
-            <div className="w-full md:w-56">
-              <label
-                htmlFor="country"
-                className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500"
-              >
-                Country
-              </label>
-              <select
-                id="country"
-                value={country}
-                onChange={handleCountryChange}
-                className="block w-full rounded-xl border border-slate-200 bg-slate-50/60 px-3 py-2 text-sm text-slate-900 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
-              >
-                {COUNTRY_OPTIONS.map((opt) => (
-                  <option key={opt.value} value={opt.value}>
-                    {opt.label}
-                  </option>
-                ))}
-              </select>
-              <p className="mt-1 text-[11px] text-slate-400">
-                World = events from any country.
+              <p className="text-xs text-slate-500">
+                Update your preferences on the{" "}
+                <span className="font-semibold">Preferences</span> page to see
+                different results.
               </p>
-            </div>
-
-            {/* Search button */}
-            <div className="flex w-full items-end justify-start md:w-auto">
               <button
-                type="submit"
-                className="inline-flex w-full items-center justify-center gap-1 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-1 md:w-auto"
+                type="button"
+                onClick={fetchRecommended}
+                className="mt-2 inline-flex w-fit items-center justify-center gap-1 rounded-full bg-indigo-600 px-4 py-2 text-xs font-semibold text-white shadow-sm hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-1"
               >
-                🔍 Search
+                🔄 Refresh recommendations
               </button>
             </div>
-          </form>
+          ) : (
+            <form
+              onSubmit={handleSearchSubmit}
+              className="flex flex-col gap-3 md:flex-row md:items-center md:flex-wrap"
+            >
+              {/* Search */}
+              <div className="flex-1 min-w-[220px]">
+                <label
+                  htmlFor="search"
+                  className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500"
+                >
+                  Search by keyword
+                </label>
+                <div className="flex rounded-xl border border-slate-200 bg-slate-50/60 px-3 py-2 focus-within:border-indigo-500 focus-within:ring-1 focus-within:ring-indigo-500">
+                  <input
+                    id="search"
+                    type="text"
+                    value={q}
+                    onChange={(e) => setQ(e.target.value)}
+                    placeholder="e.g. music festival, coding meetup, comedy show..."
+                    className="block w-full bg-transparent text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              {/* Category */}
+              <div className="w-full md:w-56">
+                <label
+                  htmlFor="category"
+                  className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500"
+                >
+                  Category
+                </label>
+                <select
+                  id="category"
+                  value={category}
+                  onChange={handleCategoryChange}
+                  className="block w-full rounded-xl border border-slate-200 bg-slate-50/60 px-3 py-2 text-sm text-slate-900 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                >
+                  {CATEGORY_OPTIONS.map((opt) => (
+                    <option key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
+                <p className="mt-1 text-[11px] text-slate-400">
+                  Category updates results instantly.
+                </p>
+              </div>
+
+              {/* Country */}
+              <div className="w-full md:w-56">
+                <label
+                  htmlFor="country"
+                  className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500"
+                >
+                  Country
+                </label>
+                <select
+                  id="country"
+                  value={country}
+                  onChange={handleCountryChange}
+                  className="block w-full rounded-xl border border-slate-200 bg-slate-50/60 px-3 py-2 text-sm text-slate-900 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                >
+                  {COUNTRY_OPTIONS.map((opt) => (
+                    <option key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
+                <p className="mt-1 text-[11px] text-slate-400">
+                  World = events from any country.
+                </p>
+              </div>
+
+              {/* Search button */}
+              <div className="flex w-full items-end justify-start md:w-auto">
+                <button
+                  type="submit"
+                  className="inline-flex w-full items-center justify-center gap-1 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-1 md:w-auto"
+                >
+                  🔍 Search
+                </button>
+              </div>
+            </form>
+          )}
         </section>
 
         {/* Results */}
@@ -228,7 +342,9 @@ export default function EventsPage() {
                 No events found.
               </p>
               <p className="mt-1 text-xs text-slate-500">
-                Try a different keyword, category, or country.
+                {mode === "ai"
+                  ? "Try updating your preferences or refreshing recommendations."
+                  : "Try a different keyword, category, or country."}
               </p>
             </div>
           ) : (
