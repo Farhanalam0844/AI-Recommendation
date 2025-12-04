@@ -45,9 +45,17 @@ router.get("/search", async (req, res, next) => {
     next(err);
   }
 });
-// ✅ NEW: GET /api/events/external  (Ticketmaster + Eventbrite + country filter)
+// ✅ NEW: GET /api/events/external with budget support
 router.get("/external", async (req, res) => {
-  const { q, category, country } = req.query; // 👈 now reading country
+   console.log("🧪 /events/external query:", req.query);
+   
+ 
+  const { q, category, country, minPrice, maxPrice } = req.query;
+
+  const numericMin =
+    minPrice != null && minPrice !== "" ? Number(minPrice) : undefined;
+  const numericMax =
+    maxPrice != null && maxPrice !== "" ? Number(maxPrice) : undefined;
 
   let tmEvents = [];
   let ebEvents = [];
@@ -64,7 +72,7 @@ router.get("/external", async (req, res) => {
             classificationName:
               category && category !== "All" ? category : undefined,
             size: 20,
-            // 🌍 World = no countryCode => global
+            // World = no countryCode => global
             countryCode:
               country && country !== "World" ? country : undefined,
           },
@@ -74,6 +82,8 @@ router.get("/external", async (req, res) => {
       const raw = tmRes.data?._embedded?.events || [];
       tmEvents = raw.map((e) => {
         const venue = e._embedded?.venues?.[0];
+        const priceRange = e.priceRanges?.[0];
+
         return {
           id: `tm_${e.id}`,
           source: "ticketmaster",
@@ -87,6 +97,8 @@ router.get("/external", async (req, res) => {
           image: e.images?.[0]?.url || null,
           category: e.classifications?.[0]?.segment?.name || "Event",
           score: "High match",
+          priceMin: priceRange?.min,
+          priceMax: priceRange?.max,
         };
       });
     } catch (err) {
@@ -110,9 +122,6 @@ router.get("/external", async (req, res) => {
         page_size: 20,
       };
 
-      // You can decide how to use country here. For now:
-      // - If specific country selected, use it as location.address
-      // - Otherwise default to Melbourne
       ebParams["location.address"] =
         country && country !== "World" ? country : "Melbourne";
 
@@ -130,6 +139,7 @@ router.get("/external", async (req, res) => {
       ebEvents = raw.map((e) => {
         const venue = e.venue;
         const start = e.start || {};
+        // Eventbrite price is more complex → we skip price filtering here
         return {
           id: `eb_${e.id}`,
           source: "eventbrite",
@@ -143,6 +153,8 @@ router.get("/external", async (req, res) => {
           image: e.logo?.url || null,
           category: e.category_id || "Event",
           score: "Medium match",
+          priceMin: undefined,
+          priceMax: undefined,
         };
       });
     } catch (err) {
@@ -157,14 +169,43 @@ router.get("/external", async (req, res) => {
     console.warn("⚠️ EVENTBRITE_TOKEN not set. Skipping Eventbrite.");
   }
 
-  // ---------- Merge & return ----------
-  const merged = [...tmEvents, ...ebEvents].sort((a, b) => {
+  // ---------- Merge ----------
+  let merged = [...tmEvents, ...ebEvents].sort((a, b) => {
     if (!a.date || !b.date) return 0;
     return new Date(a.date) - new Date(b.date);
   });
 
+
+// ---------- Budget filter ----------
+if (numericMin != null || numericMax != null) {
+  console.log("💰 Applying budget filter:", { numericMin, numericMax });
+
+  merged = merged.filter((evt) => {
+    // If event has no price info at all, HIDE it when a budget is set
+    if (evt.priceMin == null && evt.priceMax == null) return false;
+
+    const min = evt.priceMin ?? evt.priceMax;
+    const max = evt.priceMax ?? evt.priceMin;
+
+    if (numericMin != null && max != null && max < numericMin) return false;
+    if (numericMax != null && min != null && min > numericMax) return false;
+
+    return true;
+  });
+
+  console.log(
+    "💰 Events after budget filter:",
+    merged.length,
+    "of",
+    tmEvents.length + ebEvents.length
+  );
+}
+
+
   return res.json({ events: merged });
 });
+
+
 
 // GET /api/events/recommend/me
 

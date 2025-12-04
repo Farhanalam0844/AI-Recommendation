@@ -102,7 +102,7 @@ const recommendationService = {
 
     const maxDistanceKm = prefs.maxDistanceKm || 50;
 
-    // ---- 3) Content-based & context + popularity (your old logic, slightly refactored) ----
+    // ---- 3) Content-based & context + popularity ----
     const cbfRaw = {};
     const contextRaw = {};
     const popRaw = {};
@@ -110,25 +110,48 @@ const recommendationService = {
     const nowMs = now.getTime();
     const maxHoursWindow = 24 * 30; // 30 days
 
+    // 🔥 behavioural preference maps (populated by behaviorService)
+    const categoryScores = prefs.categoryScores || {};
+    const countryScores = prefs.countryScores || {};
+    const keywordScores = prefs.keywordScores || {}; // reserved for future use
+
     events.forEach((evt) => {
-      // --- CBF: category & price match ---
+      // --- CBF: explicit prefs + behavioural prefs + price match ---
       let cbfScore = 0;
+
+      // 1) Explicit categories the user selected
       if (prefs.categories?.length && prefs.categories.includes(evt.category)) {
         cbfScore += 0.6;
       }
 
+      // 2) Behavioural category score (from clicks/bookmarks/ratings/searches)
+      if (evt.category && categoryScores[evt.category]) {
+        // keep it between 0–1 by scaling with a constant
+        const w = Math.min(categoryScores[evt.category] / 10, 1);
+        cbfScore += 0.4 * w;
+      }
+
+      // 3) Behavioural country preference (if you store evt.countryCode)
+      if (evt.countryCode && countryScores[evt.countryCode]) {
+        const w = Math.min(countryScores[evt.countryCode] / 10, 1);
+        cbfScore += 0.2 * w;
+      }
+
+      // 4) Price fit (same as before)
       if (
         prefs.priceMin != null &&
         evt.price_min != null &&
         evt.price_min >= prefs.priceMin
-      )
+      ) {
         cbfScore += 0.1;
+      }
       if (
         prefs.priceMax != null &&
         evt.price_max != null &&
         evt.price_max <= prefs.priceMax
-      )
+      ) {
         cbfScore += 0.1;
+      }
 
       cbfRaw[evt._id.toString()] = cbfScore;
 

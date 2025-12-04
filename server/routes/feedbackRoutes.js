@@ -3,6 +3,8 @@ const express = require("express");
 const auth = require("../middleware/auth");
 const Feedback = require("../models/Feedback");
 const Event = require("../models/Event");
+const behaviorService = require("../services/behaviorService");
+
 
 const router = express.Router();
 
@@ -38,7 +40,7 @@ router.post("/", auth, async (req, res, next) => {
         $inc: { ratingSum: rating, ratingCount: 1, bookmarkCount: 1 }
       });
     }
-
+await behaviorService.logRating(req.user, await Event.findById(eventId).lean(), rating);
     // Add interaction to user history (optional)
     req.user.interactions.push({
       event: eventId,

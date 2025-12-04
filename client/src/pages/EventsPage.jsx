@@ -1,9 +1,7 @@
 // src/pages/Search.jsx (or EventsPage.jsx)
 import React, { useEffect, useState, useCallback } from "react";
 import EventCard from "../components/EventCard";
-import api from "../services/api"; // ✅ NEW: axios instance with auth
-
-const API_BASE_URL = "http://localhost:8000";
+import api from "../services/api";
 
 const CATEGORY_OPTIONS = [
   { value: "All", label: "All categories" },
@@ -26,50 +24,37 @@ const COUNTRY_OPTIONS = [
 ];
 
 export default function EventsPage() {
-  const [mode, setMode] = useState("ai"); // "ai" | "live" ✅ NEW
+  const [mode, setMode] = useState("ai"); // "ai" | "live"
   const [q, setQ] = useState("");
   const [category, setCategory] = useState("All");
   const [country, setCountry] = useState("World");
+
   const [events, setEvents] = useState([]);
   const [loading, setLoading] = useState(false);
   const [source] = useState("external");
   const [error, setError] = useState("");
 
-  // ------------ LIVE SEARCH (existing behaviour) ------------
+  // ------------ LIVE SEARCH ------------
   const fetchEvents = useCallback(
     async ({ trigger = "initial" } = {}) => {
       try {
         setLoading(true);
         setError("");
 
-        let url;
-        const params = new URLSearchParams();
+        const params = {};
 
-        if (source === "external") {
-          url = `${API_BASE_URL}/api/events/external`;
-          if (q.trim()) params.set("q", q.trim());
-          if (category && category !== "All") params.set("category", category);
-          if (country && country !== "World") params.set("country", country);
-        } else {
-          url = `${API_BASE_URL}/api/events/search`;
-          if (q.trim()) params.set("q", q.trim());
-          if (category && category !== "All") params.set("category", category);
-        }
+        if (q.trim()) params.q = q.trim();
+        if (category && category !== "All") params.category = category;
+        if (country && country !== "World") params.country = country;
 
-        const fullUrl = `${url}${
-          params.toString() ? `?${params.toString()}` : ""
-        }`;
-        console.log("🔎 Fetching events:", { fullUrl, trigger });
+        const url = source === "external" ? "/events/external" : "/events/search";
 
-        const res = await fetch(fullUrl);
-        if (!res.ok) {
-          const text = await res.text();
-          console.error("Backend error:", res.status, text);
-          throw new Error(`Request failed with status ${res.status}`);
-        }
+        console.log("🔎 Fetching events:", { url, params, trigger });
 
-        const data = await res.json();
+        const res = await api.get(url, { params });
+        const data = res.data;
         const list = source === "external" ? data.events || [] : data || [];
+
         setEvents(list);
       } catch (err) {
         console.error("Error fetching events:", err);
@@ -81,20 +66,18 @@ export default function EventsPage() {
     [source, q, category, country]
   );
 
-  // ------------ AI RECOMMENDATIONS (NEW) ------------
+  // ------------ AI RECOMMENDATIONS ------------
   const fetchRecommended = useCallback(async () => {
     try {
       setLoading(true);
       setError("");
 
-      // uses axios instance with Authorization header
       const res = await api.get("/events/recommend/me", {
         params: { limit: 30 },
       });
 
       const data = res.data || [];
 
-      // Map backend event (Mongo) -> EventCard shape
       const mapped = data.map((e) => {
         const dt = e.start_utc ? new Date(e.start_utc) : null;
         const iso = dt ? dt.toISOString() : null;
@@ -104,17 +87,15 @@ export default function EventsPage() {
         return {
           ...e,
           id: e._id,
-          // EventCard fields:
           title: e.title,
           date,
           time,
           venue: e.venue_name,
           city: e.city || "",
           country: e.country || "",
-          image: e.image || null, // in case you later add image to DB
+          image: e.image || null,
           source: "internal",
           category: e.category,
-          // show AI score to help explain recommendations
           score:
             typeof e._score === "number"
               ? `AI score: ${e._score.toFixed(2)}`
@@ -131,6 +112,24 @@ export default function EventsPage() {
     }
   }, []);
 
+  // ------------ CLICK LOGGING (for AI training) ------------
+  const handleEventClick = useCallback((event) => {
+    const payload = {
+      eventId:
+        event._id || (event.source === "internal" ? event.id : undefined),
+      externalId:
+        event.source !== "internal" ? event.id || event.externalId : undefined,
+      source: event.source,
+      title: event.title,
+      url: event.url,
+      category: event.category,
+    };
+
+    api.post("/behavior/click", payload).catch(() => {
+      // fire-and-forget – we don't block UI
+    });
+  }, []);
+
   // ------------ useEffect to load depending on mode ------------
   useEffect(() => {
     if (mode === "ai") {
@@ -140,119 +139,155 @@ export default function EventsPage() {
     }
   }, [mode, fetchEvents, fetchRecommended]);
 
-  const handleCategoryChange = (e) => {
-    setCategory(e.target.value);
-  };
+  const handleCategoryChange = (e) => setCategory(e.target.value);
+  const handleCountryChange = (e) => setCountry(e.target.value);
 
-  const handleCountryChange = (e) => {
-    setCountry(e.target.value);
-  };
-
-  const handleSearchSubmit = (e) => {
+  const handleSearchSubmit = async (e) => {
     e.preventDefault();
+
+    // log search behaviour (still useful for AI, even without price)
+    api
+      .post("/behavior/search", {
+        q,
+        category,
+        country,
+        source: mode === "live" ? "external" : "ai",
+      })
+      .catch(() => {});
+
     if (mode === "live") {
       fetchEvents({ trigger: "text-search" });
     } else {
-      // in AI mode, search bar is not used (recommendations based on prefs)
       fetchRecommended();
     }
   };
 
+  const resultsLabel =
+    events.length === 0
+      ? "No events"
+      : `${events.length} event${events.length > 1 ? "s" : ""}`;
+
   return (
-    <div className="min-h-screen bg-slate-50">
+    <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950">
       <div className="mx-auto max-w-6xl px-4 py-8">
         {/* Header */}
-        <header className="mb-6 flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
+        <header className="mb-6 flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
           <div>
-            <h1 className="text-3xl font-bold tracking-tight text-slate-900">
-              {mode === "ai" ? "AI-Recommended Events" : "Discover Events"}
+            <div className="inline-flex items-center gap-2 rounded-full bg-emerald-500/10 px-3 py-1 text-[11px] font-medium text-emerald-300 ring-1 ring-emerald-500/30 mb-2">
+              <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-400" />
+              <span>AI-powered event discovery</span>
+            </div>
+            <h1 className="text-3xl font-bold tracking-tight text-slate-50">
+              {mode === "ai" ? "Your Smart Event Feed" : "Discover Live Events"}
             </h1>
-            <p className="mt-1 text-sm text-slate-600">
+            <p className="mt-1 text-sm text-slate-300">
               {mode === "ai"
-                ? "Personalised events based on your saved preferences, location, and feedback."
-                : "Search across live events from Ticketmaster & Eventbrite."}
+                ? "Personalised events based on your behaviour, preferences and feedback."
+                : "Search across live events from Ticketmaster & Eventbrite with powerful filters."}
             </p>
           </div>
 
           {/* Mode toggle */}
-          <div className="inline-flex rounded-full border border-slate-200 bg-white p-1 text-xs font-medium shadow-sm">
-            <button
-              type="button"
-              onClick={() => setMode("ai")}
-              className={`px-3 py-1.5 rounded-full ${
-                mode === "ai"
-                  ? "bg-indigo-600 text-white shadow"
-                  : "text-slate-600"
-              }`}
-            >
-              AI Recommended
-            </button>
-            <button
-              type="button"
-              onClick={() => setMode("live")}
-              className={`px-3 py-1.5 rounded-full ${
-                mode === "live"
-                  ? "bg-indigo-600 text-white shadow"
-                  : "text-slate-600"
-              }`}
-            >
-              Live Search
-            </button>
+          <div className="flex flex-col items-end gap-2">
+            <div className="inline-flex rounded-full border border-slate-700 bg-slate-900/80 p-1 text-xs font-medium shadow-sm backdrop-blur">
+              <button
+                type="button"
+                onClick={() => setMode("ai")}
+                className={`px-3 py-1.5 rounded-full transition-all ${
+                  mode === "ai"
+                    ? "bg-emerald-500 text-slate-900 shadow"
+                    : "text-slate-300 hover:text-slate-50"
+                }`}
+              >
+                AI Recommended
+              </button>
+              <button
+                type="button"
+                onClick={() => setMode("live")}
+                className={`px-3 py-1.5 rounded-full transition-all ${
+                  mode === "live"
+                    ? "bg-indigo-500 text-slate-900 shadow"
+                    : "text-slate-300 hover:text-slate-50"
+                }`}
+              >
+                Live Search
+              </button>
+            </div>
+            <p className="text-[11px] text-slate-400">
+              Mode:{" "}
+              <span className="font-semibold text-slate-200">
+                {mode === "ai" ? "AI recommendations" : "Real-time external API"}
+              </span>
+            </p>
           </div>
         </header>
 
         {/* Filters / Info */}
-        <section className="mb-6 rounded-2xl border border-slate-200 bg-white/90 p-4 shadow-sm">
+        <section className="mb-4 rounded-2xl border border-slate-800 bg-slate-900/80 p-4 shadow-xl shadow-black/40 backdrop-blur">
           {mode === "ai" ? (
-            <div className="flex flex-col gap-2 text-sm text-slate-700">
+            <div className="flex flex-col gap-2 text-sm text-slate-200">
               <p>
                 These recommendations use your{" "}
-                <span className="font-semibold">Preferences</span> (categories,
-                distance, etc.) and feedback (ratings, clicks, bookmarks).
+                <span className="font-semibold text-emerald-300">
+                  Preferences
+                </span>{" "}
+                (categories, distance, etc.) and behaviour (searches, clicks,
+                bookmarks).
               </p>
-              <p className="text-xs text-slate-500">
+              <p className="text-xs text-slate-400">
                 Update your preferences on the{" "}
-                <span className="font-semibold">Preferences</span> page to see
-                different results.
+                <span className="font-semibold text-slate-200">
+                  Preferences
+                </span>{" "}
+                page to steer the AI towards different types of events.
               </p>
-              <button
-                type="button"
-                onClick={fetchRecommended}
-                className="mt-2 inline-flex w-fit items-center justify-center gap-1 rounded-full bg-indigo-600 px-4 py-2 text-xs font-semibold text-white shadow-sm hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-1"
-              >
-                🔄 Refresh recommendations
-              </button>
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={fetchRecommended}
+                  className="inline-flex items-center justify-center gap-1 rounded-full bg-emerald-500 px-4 py-2 text-xs font-semibold text-slate-900 shadow-sm hover:bg-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-400 focus:ring-offset-1 focus:ring-offset-slate-900"
+                >
+                  🔄 Refresh recommendations
+                </button>
+                <span className="text-[11px] text-slate-400">
+                  Tip: giving feedback (clicks, ratings, bookmarks) makes future
+                  results smarter.
+                </span>
+              </div>
             </div>
           ) : (
             <form
               onSubmit={handleSearchSubmit}
-              className="flex flex-col gap-3 md:flex-row md:items-center md:flex-wrap"
+              className="flex flex-col gap-3 md:flex-row md:flex-wrap md:items-end"
             >
               {/* Search */}
               <div className="flex-1 min-w-[220px]">
                 <label
                   htmlFor="search"
-                  className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500"
+                  className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-400"
                 >
                   Search by keyword
                 </label>
-                <div className="flex rounded-xl border border-slate-200 bg-slate-50/60 px-3 py-2 focus-within:border-indigo-500 focus-within:ring-1 focus-within:ring-indigo-500">
+                <div className="flex rounded-xl border border-slate-700 bg-slate-900/70 px-3 py-2 focus-within:border-indigo-400 focus-within:ring-1 focus-within:ring-indigo-400">
+                  <span className="mr-2 mt-[1px] text-slate-500 text-sm">
+                    🔍
+                  </span>
                   <input
                     id="search"
                     type="text"
                     value={q}
                     onChange={(e) => setQ(e.target.value)}
                     placeholder="e.g. music festival, coding meetup, comedy show..."
-                    className="block w-full bg-transparent text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none"
+                    className="block w-full bg-transparent text-sm text-slate-50 placeholder:text-slate-500 focus:outline-none"
                   />
                 </div>
               </div>
 
               {/* Category */}
-              <div className="w-full md:w-56">
+              <div className="w-full md:w-48">
                 <label
                   htmlFor="category"
-                  className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500"
+                  className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-400"
                 >
                   Category
                 </label>
@@ -260,7 +295,7 @@ export default function EventsPage() {
                   id="category"
                   value={category}
                   onChange={handleCategoryChange}
-                  className="block w-full rounded-xl border border-slate-200 bg-slate-50/60 px-3 py-2 text-sm text-slate-900 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                  className="block w-full rounded-xl border border-slate-700 bg-slate-900/70 px-3 py-2 text-sm text-slate-50 focus:border-indigo-400 focus:outline-none focus:ring-1 focus:ring-indigo-400"
                 >
                   {CATEGORY_OPTIONS.map((opt) => (
                     <option key={opt.value} value={opt.value}>
@@ -268,16 +303,16 @@ export default function EventsPage() {
                     </option>
                   ))}
                 </select>
-                <p className="mt-1 text-[11px] text-slate-400">
+                <p className="mt-1 text-[11px] text-slate-500">
                   Category updates results instantly.
                 </p>
               </div>
 
               {/* Country */}
-              <div className="w-full md:w-56">
+              <div className="w-full md:w-48">
                 <label
                   htmlFor="country"
-                  className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500"
+                  className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-400"
                 >
                   Country
                 </label>
@@ -285,7 +320,7 @@ export default function EventsPage() {
                   id="country"
                   value={country}
                   onChange={handleCountryChange}
-                  className="block w-full rounded-xl border border-slate-200 bg-slate-50/60 px-3 py-2 text-sm text-slate-900 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                  className="block w-full rounded-xl border border-slate-700 bg-slate-900/70 px-3 py-2 text-sm text-slate-50 focus:border-indigo-400 focus:outline-none focus:ring-1 focus:ring-indigo-400"
                 >
                   {COUNTRY_OPTIONS.map((opt) => (
                     <option key={opt.value} value={opt.value}>
@@ -293,7 +328,7 @@ export default function EventsPage() {
                     </option>
                   ))}
                 </select>
-                <p className="mt-1 text-[11px] text-slate-400">
+                <p className="mt-1 text-[11px] text-slate-500">
                   World = events from any country.
                 </p>
               </div>
@@ -302,19 +337,55 @@ export default function EventsPage() {
               <div className="flex w-full items-end justify-start md:w-auto">
                 <button
                   type="submit"
-                  className="inline-flex w-full items-center justify-center gap-1 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-1 md:w-auto"
+                  className="inline-flex w-full items-center justify-center gap-1 rounded-xl bg-indigo-500 px-4 py-2.5 text-sm font-semibold text-slate-900 shadow-sm hover:bg-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:ring-offset-1 focus:ring-offset-slate-900 md:w-auto"
                 >
-                  🔍 Search
+                  Search events
+                  <span className="text-base">✨</span>
                 </button>
               </div>
             </form>
           )}
         </section>
 
+        {/* Active filters / stats */}
+        <section className="mb-4 flex flex-wrap items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center gap-2 text-[11px]">
+            <span className="rounded-full bg-slate-900/80 px-3 py-1 text-slate-300 ring-1 ring-slate-700">
+              {resultsLabel}
+            </span>
+            {mode === "live" && (
+              <>
+                {q.trim() && (
+                  <span className="rounded-full bg-slate-900/60 px-3 py-1 text-slate-300 ring-1 ring-slate-800">
+                    🔎 Query:{" "}
+                    <span className="font-medium text-slate-50">{q}</span>
+                  </span>
+                )}
+                {category !== "All" && (
+                  <span className="rounded-full bg-slate-900/60 px-3 py-1 text-slate-300 ring-1 ring-slate-800">
+                    🎭 Category:{" "}
+                    <span className="font-medium text-slate-50">
+                      {category}
+                    </span>
+                  </span>
+                )}
+                {country !== "World" && (
+                  <span className="rounded-full bg-slate-900/60 px-3 py-1 text-slate-300 ring-1 ring-slate-800">
+                    🌐 Country:{" "}
+                    <span className="font-medium text-slate-50">
+                      {country}
+                    </span>
+                  </span>
+                )}
+              </>
+            )}
+          </div>
+        </section>
+
         {/* Results */}
         <section>
           {error && (
-            <div className="mb-4 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+            <div className="mb-4 rounded-xl border border-red-500/40 bg-red-950/60 px-3 py-2 text-sm text-red-100">
               {error}
             </div>
           )}
@@ -324,33 +395,37 @@ export default function EventsPage() {
               {Array.from({ length: 6 }).map((_, i) => (
                 <div
                   key={i}
-                  className="animate-pulse rounded-2xl border border-slate-200 bg-white/80 shadow-sm"
+                  className="animate-pulse rounded-2xl border border-slate-800 bg-slate-900/80 shadow-sm"
                 >
-                  <div className="aspect-[16/9] w-full bg-slate-200" />
+                  <div className="aspect-[16/9] w-full bg-slate-800" />
                   <div className="space-y-3 p-4">
-                    <div className="h-4 w-3/4 rounded bg-slate-200" />
-                    <div className="h-3 w-1/2 rounded bg-slate-200" />
-                    <div className="h-3 w-2/3 rounded bg-slate-200" />
-                    <div className="h-8 w-24 rounded-full bg-slate-200" />
+                    <div className="h-4 w-3/4 rounded bg-slate-800" />
+                    <div className="h-3 w-1/2 rounded bg-slate-800" />
+                    <div className="h-3 w-2/3 rounded bg-slate-800" />
+                    <div className="h-8 w-24 rounded-full bg-slate-800" />
                   </div>
                 </div>
               ))}
             </div>
           ) : events.length === 0 ? (
-            <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-white/70 px-6 py-12 text-center">
-              <p className="text-sm font-medium text-slate-900">
+            <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-slate-800 bg-slate-900/70 px-6 py-12 text-center">
+              <p className="text-sm font-medium text-slate-100">
                 No events found.
               </p>
-              <p className="mt-1 text-xs text-slate-500">
+              <p className="mt-1 text-xs text-slate-400">
                 {mode === "ai"
-                  ? "Try updating your preferences or refreshing recommendations."
+                  ? "Try refreshing recommendations or adjusting your preferences."
                   : "Try a different keyword, category, or country."}
               </p>
             </div>
           ) : (
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
               {events.map((event) => (
-                <EventCard key={event.id || event._id} event={event} />
+                <EventCard
+                  key={event.id || event._id}
+                  event={event}
+                  onEventClick={handleEventClick}
+                />
               ))}
             </div>
           )}
