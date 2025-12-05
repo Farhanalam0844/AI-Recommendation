@@ -132,9 +132,7 @@ export default function EventCard({ event, onEventClick }) {
 
         {/* Footer actions */}
         <div className="mt-4 flex items-center justify-between">
-          <span className="text-[11px] text-slate-400">
-            Click card or “View details” to open event
-          </span>
+
 
           {url && (
             <a

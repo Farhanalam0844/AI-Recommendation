@@ -37,7 +37,7 @@ router.post("/", auth, async (req, res, next) => {
       });
 
       await Event.findByIdAndUpdate(eventId, {
-        $inc: { ratingSum: rating, ratingCount: 1, bookmarkCount: 1 }
+        $inc: { ratingSum: rating, ratingCount: 1}
       });
     }
 await behaviorService.logRating(req.user, await Event.findById(eventId).lean(), rating);

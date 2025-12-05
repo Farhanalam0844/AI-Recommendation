@@ -49,8 +49,7 @@ export default function EventsPage() {
 
         const url = source === "external" ? "/events/external" : "/events/search";
 
-        console.log("🔎 Fetching events:", { url, params, trigger });
-
+       
         const res = await api.get(url, { params });
         const data = res.data;
         const list = source === "external" ? data.events || [] : data || [];
@@ -65,52 +64,42 @@ export default function EventsPage() {
     },
     [source, q, category, country]
   );
+// ------------ AI RECOMMENDATIONS (LIVE FROM APIs) ------------
+const fetchRecommended = useCallback(async () => {
+  try {
+    setLoading(true);
+    setError("");
 
-  // ------------ AI RECOMMENDATIONS ------------
-  const fetchRecommended = useCallback(async () => {
-    try {
-      setLoading(true);
-      setError("");
+    // 👇 New endpoint: live recommendations using APIs + preferences
+    const res = await api.get("/events/recommend/live", {
+      params: { limit: 30 },
+    });
 
-      const res = await api.get("/events/recommend/me", {
-        params: { limit: 30 },
-      });
+    // backend returns: { events: [...] }
+    const data = res.data?.events || [];
 
-      const data = res.data || [];
+    // Data is already in front-end friendly shape from the route:
+    // { id, title, date, time, venue, city, country, image, category, source, priceMin, priceMax, score, ... }
+    const mapped = data.map((e) => ({
+      ...e,
+      // ensure we always have an id + source for click logging / EventCard
+      id: e.id,
+      source: e.source || "external",
+      score:
+        typeof e.score === "number"
+          ? `AI score: ${e.score.toFixed(2)}`
+          : undefined,
+    }));
 
-      const mapped = data.map((e) => {
-        const dt = e.start_utc ? new Date(e.start_utc) : null;
-        const iso = dt ? dt.toISOString() : null;
-        const date = iso ? iso.slice(0, 10) : null;
-        const time = iso ? iso.slice(11, 16) : null;
-
-        return {
-          ...e,
-          id: e._id,
-          title: e.title,
-          date,
-          time,
-          venue: e.venue_name,
-          city: e.city || "",
-          country: e.country || "",
-          image: e.image || null,
-          source: "internal",
-          category: e.category,
-          score:
-            typeof e._score === "number"
-              ? `AI score: ${e._score.toFixed(2)}`
-              : undefined,
-        };
-      });
-
-      setEvents(mapped);
-    } catch (err) {
-      console.error("Error fetching recommendations:", err);
-      setError("Could not load AI recommendations. Please try again.");
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+    setEvents(mapped);
+  } catch (err) {
+    console.error("Error fetching recommendations:", err);
+    setError("Could not load AI recommendations. Please try again.");
+  } finally {
+    setLoading(false);
+  }
+}, []);
+;
 
   // ------------ CLICK LOGGING (for AI training) ------------
   const handleEventClick = useCallback((event) => {
@@ -231,8 +220,7 @@ export default function EventsPage() {
                 <span className="font-semibold text-emerald-300">
                   Preferences
                 </span>{" "}
-                (categories, distance, etc.) and behaviour (searches, clicks,
-                bookmarks).
+                (categories, distance, etc.) and behaviour (searches, clicks).
               </p>
               <p className="text-xs text-slate-400">
                 Update your preferences on the{" "}
@@ -249,10 +237,7 @@ export default function EventsPage() {
                 >
                   🔄 Refresh recommendations
                 </button>
-                <span className="text-[11px] text-slate-400">
-                  Tip: giving feedback (clicks, ratings, bookmarks) makes future
-                  results smarter.
-                </span>
+                
               </div>
             </div>
           ) : (

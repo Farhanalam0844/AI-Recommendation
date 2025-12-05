@@ -41,18 +41,4 @@ router.post("/click", auth, async (req, res, next) => {
   }
 });
 
-// POST /api/behavior/bookmark  (optional)
-router.post("/bookmark", auth, async (req, res, next) => {
-  try {
-    const { eventId } = req.body;
-    if (!eventId) {
-      return res.status(400).json({ message: "eventId is required" });
-    }
-    await behaviorService.logBookmark(req.user, eventId);
-    res.json({ status: "ok" });
-  } catch (err) {
-    next(err);
-  }
-});
-
 module.exports = router;

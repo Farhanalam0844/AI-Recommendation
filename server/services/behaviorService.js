@@ -1,142 +1,9 @@
-// // services/behaviorService.js
-// const Event = require("../models/Event");
-
-// // small helper to safely increment a score in preferences
-// function incrementPrefScore(prefs, field, key, delta) {
-//   if (!key) return;
-//   if (!prefs[field]) prefs[field] = {};
-//   const current = prefs[field][key] || 0;
-//   prefs[field][key] = current + delta;
-// }
-
-// // very simple keyword tokenizer
-// function extractKeywords(q) {
-//   if (!q) return [];
-//   return q
-//     .toLowerCase()
-//     .split(/[^a-z0-9]+/)
-//     .filter((t) => t && t.length > 2);
-// }
-
-// const behaviorService = {
-//   async logSearch(user, { q, category, country, source }) {
-//     const prefs = user.preferences || {};
-
-//     // 1) raw interaction
-//     user.interactions.push({
-//       type: "search",
-//       meta: { q, category, country, source },
-//     });
-
-//     // 2) aggregated scores
-//     // search keywords (small weight)
-//     const tokens = extractKeywords(q);
-//     tokens.forEach((t) => incrementPrefScore(prefs, "keywordScores", t, 0.3));
-
-//     // selected category from search filter (medium weight)
-//     if (category && category !== "All") {
-//       incrementPrefScore(prefs, "categoryScores", category, 0.5);
-//     }
-
-//     // selected country (geo preference)
-//     if (country && country !== "World") {
-//       incrementPrefScore(prefs, "countryScores", country, 0.4);
-//     }
-
-//     user.preferences = prefs;
-//     user.markModified("preferences");
-//     await user.save();
-//   },
-
-//   async logEventClick(user, eventId) {
-//     const event = await Event.findById(eventId).lean();
-//     if (!event) return;
-
-//     const prefs = user.preferences || {};
-
-//     // raw interaction
-//     user.interactions.push({
-//       type: "click",
-//       event: event._id,
-//       meta: {
-//         category: event.category,
-//         provider: event.provider,
-//       },
-//     });
-
-//     // strong signal that user cares about this category / country
-//     if (event.category) {
-//       incrementPrefScore(prefs, "categoryScores", event.category, 1.0);
-//     }
-
-//     if (event.countryCode) {
-//       incrementPrefScore(prefs, "countryScores", event.countryCode, 0.7);
-//     }
-
-//     user.preferences = prefs;
-//     user.markModified("preferences");
-//     await user.save();
-//   },
-
-//   async logBookmark(user, eventId) {
-//     const event = await Event.findById(eventId).lean();
-//     if (!event) return;
-
-//     const prefs = user.preferences || {};
-
-//     user.interactions.push({
-//       type: "bookmark",
-//       event: event._id,
-//       meta: {
-//         category: event.category,
-//       },
-//     });
-
-//     // bookmark = even stronger than click
-//     if (event.category) {
-//       incrementPrefScore(prefs, "categoryScores", event.category, 1.5);
-//     }
-
-//     user.preferences = prefs;
-//     user.markModified("preferences");
-//     await user.save();
-//   },
-
-//   async logRating(user, event, rating) {
-//     const prefs = user.preferences || {};
-
-//     user.interactions.push({
-//       type: "rated",
-//       event: event._id,
-//       meta: { rating },
-//     });
-
-//     // positive ratings → boost category & keywords harder
-//     const weight =
-//       rating >= 4 ? 1.5 : rating >= 3 ? 0.5 : rating <= 2 ? -0.5 : 0;
-
-//     if (event.category) {
-//       incrementPrefScore(prefs, "categoryScores", event.category, weight);
-//     }
-
-//     // optional: use title tokens as keywords
-//     if (event.title) {
-//       extractKeywords(event.title).forEach((t) =>
-//         incrementPrefScore(prefs, "keywordScores", t, weight * 0.3)
-//       );
-//     }
-
-//     user.preferences = prefs;
-//     user.markModified("preferences");
-//     await user.save();
-//   },
-// };
-
-// module.exports = behaviorService;
 // services/behaviorService.js
 const Event = require("../models/Event");
 
-// small helper to safely increment a score in preferences
+// ---- SMALL HELPERS ----
+
+// safely increment a score in preferences
 function incrementPrefScore(prefs, field, key, delta) {
   if (!key) return;
   if (!prefs[field]) prefs[field] = {};
@@ -160,22 +27,30 @@ function smoothUpdate(current, incoming, alpha = 0.3) {
   return current * (1 - alpha) + incoming * alpha;
 }
 
+// ---- PRICE CLAMPING TO AVOID CRAZY VALUES ----
+const MAX_REASONABLE_PRICE = 100000; // e.g. 100k
+const MIN_REASONABLE_PRICE = 0;
+
+function clampPrice(value) {
+  if (value == null || isNaN(value)) return undefined;
+  const num = Number(value);
+  if (!Number.isFinite(num)) return undefined;
+  if (num < MIN_REASONABLE_PRICE) return undefined;
+  if (num > MAX_REASONABLE_PRICE) return undefined;
+  return num;
+}
+
 const behaviorService = {
   async logSearch(user, { q, category, country, source, minPrice, maxPrice }) {
     const prefs = user.preferences || {};
 
-    const numericMin =
-      typeof minPrice === "number"
-        ? minPrice
-        : minPrice != null
-        ? Number(minPrice)
-        : undefined;
-    const numericMax =
-      typeof maxPrice === "number"
-        ? maxPrice
-        : maxPrice != null
-        ? Number(maxPrice)
-        : undefined;
+    // normalise + clamp
+    const numericMin = clampPrice(
+      typeof minPrice === "number" ? minPrice : minPrice != null ? Number(minPrice) : undefined
+    );
+    const numericMax = clampPrice(
+      typeof maxPrice === "number" ? maxPrice : maxPrice != null ? Number(maxPrice) : undefined
+    );
 
     // 1) raw interaction
     user.interactions.push({
@@ -188,6 +63,7 @@ const behaviorService = {
         minPrice: numericMin,
         maxPrice: numericMax,
       },
+      createdAt: new Date(),
     });
 
     // 2) aggregated scores
@@ -258,6 +134,7 @@ const behaviorService = {
       type: "click",
       event: eventDoc?._id || undefined,
       meta,
+      createdAt: new Date(),
     });
 
     // 2) preference updates
@@ -282,29 +159,6 @@ const behaviorService = {
     await user.save();
   },
 
-  async logBookmark(user, eventId) {
-    const event = await Event.findById(eventId).lean();
-    if (!event) return;
-
-    const prefs = user.preferences || {};
-
-    user.interactions.push({
-      type: "bookmark",
-      event: event._id,
-      meta: {
-        category: event.category,
-      },
-    });
-
-    // bookmark = even stronger than click
-    if (event.category) {
-      incrementPrefScore(prefs, "categoryScores", event.category, 1.5);
-    }
-
-    user.preferences = prefs;
-    user.markModified("preferences");
-    await user.save();
-  },
 
   async logRating(user, event, rating) {
     const prefs = user.preferences || {};
@@ -313,6 +167,7 @@ const behaviorService = {
       type: "rated",
       event: event._id,
       meta: { rating },
+      createdAt: new Date(),
     });
 
     // positive ratings → boost category & keywords harder

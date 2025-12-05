@@ -39,10 +39,6 @@ app.use("/api/feedback", feedbackRoutes);
 app.use("/api/import", importRoutes);
 app.use("/api/behavior", behaviorRoutes);
 
-app.get("/", (req, res) => {
-    console.log("Health check OK");
-  res.json({ status: "OK", message: "Event recommender backend running" });
-});
 
 // // Error handling
 app.use(notFound);

@@ -124,7 +124,7 @@ const recommendationService = {
         cbfScore += 0.6;
       }
 
-      // 2) Behavioural category score (from clicks/bookmarks/ratings/searches)
+      // 2) Behavioural category score (from clicks/ratings/searches)
       if (evt.category && categoryScores[evt.category]) {
         // keep it between 0–1 by scaling with a constant
         const w = Math.min(categoryScores[evt.category] / 10, 1);
@@ -176,12 +176,10 @@ const recommendationService = {
       const avgRating =
         evt.ratingCount > 0 ? evt.ratingSum / evt.ratingCount : 0;
       const clickCount = evt.clickCount || 0;
-      const bookmarkCount = evt.bookmarkCount || 0;
-
+     
       const popScore =
         0.6 * (avgRating / 5) +
-        0.2 * Math.tanh(clickCount / 10) +
-        0.2 * Math.tanh(bookmarkCount / 5);
+        0.2 * Math.tanh(clickCount / 10) ;
 
       popRaw[evt._id.toString()] = popScore;
     });

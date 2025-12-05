@@ -19,7 +19,6 @@ const eventSchema = new mongoose.Schema(
 
     // Popularity / feedback signals for CF-lite + L2R-style scoring
     clickCount: { type: Number, default: 0 },
-    bookmarkCount: { type: Number, default: 0 },
     ratingCount: { type: Number, default: 0 },
     ratingSum: { type: Number, default: 0 },
 

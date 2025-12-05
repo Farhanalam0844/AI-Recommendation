@@ -5,8 +5,7 @@ const connectDB = async () => {
   try {
     const uri = "mongodb://127.0.0.1:27017/event-recommender"; // force IPv4
 
-    console.log("Connecting to:", uri);
-
+  
     await mongoose.connect(uri, {
       useNewUrlParser: true,
       useUnifiedTopology: true,

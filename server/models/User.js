@@ -33,7 +33,7 @@ const interactionSchema = new mongoose.Schema(
     event: { type: mongoose.Schema.Types.ObjectId, ref: "Event" },
     type: {
       type: String,
-      enum: ["view", "click", "bookmark", "rated", "search"],
+      enum: ["view", "click", "rated", "search"],
       required: true,
     },
     meta: {
