@@ -1,10 +1,14 @@
-// routes/eventRoutes.js
+// backend/routes/eventRoutes.js
 const express = require("express");
 const axios = require("axios");
 const auth = require("../middleware/auth");
 const Event = require("../models/Event");
 const recommendationService = require("../services/recommendationService");
 const behaviorService = require("../services/behaviorService");
+const {
+  buildFeaturesFromExternalEvent,
+  scorePreferences,
+} = require("../services/recommenderModel");
 
 const router = express.Router();
 
@@ -60,22 +64,15 @@ function pickTopKey(map) {
 }
 
 /**
- * Re-rank external events for a given user
- * using behaviour-based preferences (categories, keywords, countries),
- * budget, distance & time.
+ * AI scoring for external events:
+ * - uses scorePreferences(user, features)  (our linear model)
+ * - plus context: distance + time
  */
 function scoreExternalEventsForUser(user, events) {
   if (!user) return events;
 
   const prefs = user.preferences || {};
   const nowMs = Date.now();
-
-  const categoryScores = prefs.categoryScores || {};
-  const countryScores = prefs.countryScores || {};
-  const keywordScores = prefs.keywordScores || {};
-
-  const priceMinPref = prefs.priceMin;
-  const priceMaxPref = prefs.priceMax;
 
   const userLat = Number.isFinite(user.lat) ? user.lat : null;
   const userLon = Number.isFinite(user.lon) ? user.lon : null;
@@ -85,49 +82,20 @@ function scoreExternalEventsForUser(user, events) {
 
   return events
     .map((evt) => {
-      let score = 0;
+      // 1) AI preference score from model
+      const features = buildFeaturesFromExternalEvent(evt);
+      let score = scorePreferences(user, features);
 
-      // 1) Category behaviour
-      if (evt.category && categoryScores[evt.category]) {
-        const w = Math.min(categoryScores[evt.category] / 10, 1);
-        score += 0.5 * w;
-      }
-
-      // 2) Country behaviour
-      const countryCode = evt.countryCode || evt.country;
-      if (countryCode && countryScores[countryCode]) {
-        const w = Math.min(countryScores[countryCode] / 10, 1);
-        score += 0.3 * w;
-      }
-
-      // 3) Keyword behaviour (title vs keywordScores)
-      const tokens = tokenize(evt.title);
-      let kwScore = 0;
-      tokens.forEach((t) => {
-        if (keywordScores[t]) {
-          kwScore += keywordScores[t];
-        }
-      });
-      if (kwScore > 0) {
-        score += 0.2 * Math.min(kwScore / 5, 1);
-      }
-
-      // 4) Budget fit vs learned prefs
-      const eMin = evt.priceMin ?? evt.priceMax;
-      const eMax = evt.priceMax ?? evt.priceMin;
-
-      if (priceMinPref != null && eMin != null && eMin >= priceMinPref) {
-        score += 0.1;
-      }
-      if (priceMaxPref != null && eMax != null && eMax <= priceMaxPref) {
-        score += 0.1;
-      }
-
-      // 5) Context (distance + time)
+      // 2) Context: distance + time
       let ctxScore = 0;
 
       // distance
-      if (evt.lat != null && evt.lon != null && userLat != null && userLon != null) {
+      if (
+        evt.lat != null &&
+        evt.lon != null &&
+        userLat != null &&
+        userLon != null
+      ) {
         const d = distanceKm(userLat, userLon, evt.lat, evt.lon);
         if (d != null && d <= maxDistanceKm) {
           ctxScore += 0.4 * (1 - d / maxDistanceKm);
@@ -136,7 +104,9 @@ function scoreExternalEventsForUser(user, events) {
 
       // time
       if (evt.date) {
-        const iso = evt.time ? `${evt.date}T${evt.time}` : `${evt.date}T00:00`;
+        const iso = evt.time
+          ? `${evt.date}T${evt.time}`
+          : `${evt.date}T00:00`;
         const startMs = new Date(iso).getTime();
         const hoursUntil = (startMs - nowMs) / (1000 * 60 * 60);
         if (hoursUntil > 0 && hoursUntil <= maxHoursWindow) {
@@ -149,6 +119,53 @@ function scoreExternalEventsForUser(user, events) {
       return { ...evt, score };
     })
     .sort((a, b) => (b.score || 0) - (a.score || 0));
+}
+
+// helper: call Ticketmaster API and normalise event shape
+async function fetchTicketmaster({ category, countryCode, size = 30 }) {
+  if (!TICKETMASTER_API_KEY) return [];
+
+  const params = {
+    apikey: TICKETMASTER_API_KEY,
+    size,
+  };
+
+  if (category) params.classificationName = category;
+  if (countryCode) params.countryCode = countryCode;
+
+  const tmRes = await axios.get(
+    "https://app.ticketmaster.com/discovery/v2/events.json",
+    { params }
+  );
+
+  const raw = tmRes.data?._embedded?.events || [];
+  return raw.map((e) => {
+    const venue = e._embedded?.venues?.[0];
+    const priceRange = e.priceRanges?.[0];
+
+    return {
+      id: `tm_${e.id}`,
+      source: "ticketmaster",
+      title: e.name,
+      url: e.url,
+      date: e.dates?.start?.localDate || null,
+      time: e.dates?.start?.localTime || null,
+      venue: venue?.name || "",
+      city: venue?.city?.name || "",
+      country: venue?.country?.name || "",
+      countryCode: venue?.country?.countryCode || "",
+      image: e.images?.[0]?.url || null,
+      category: e.classifications?.[0]?.segment?.name || "Event",
+      priceMin: priceRange?.min,
+      priceMax: priceRange?.max,
+      lat: venue?.location?.latitude
+        ? Number(venue.location.latitude)
+        : undefined,
+      lon: venue?.location?.longitude
+        ? Number(venue.location.longitude)
+        : undefined,
+    };
+  });
 }
 
 // -------------------------------------------------------------------
@@ -204,7 +221,7 @@ router.get("/external", auth, async (req, res, next) => {
     maxPrice != null && maxPrice !== "" ? Number(maxPrice) : undefined;
 
   try {
-    // log search for behaviour / training
+    // log search for behaviour / "training"
     try {
       await behaviorService.logSearch(req.user, {
         q,
@@ -308,7 +325,7 @@ router.get("/external", auth, async (req, res, next) => {
       );
     }
 
-    // ---------- Personalised ranking ----------
+    // ---------- Personalised ranking using AI model ----------
     merged = scoreExternalEventsForUser(req.user, merged);
 
     return res.json({ events: merged });
@@ -330,74 +347,88 @@ router.get("/recommend/live", auth, async (req, res, next) => {
   const categoryScores = prefs.categoryScores || {};
   const countryScores = prefs.countryScores || {};
 
-  const topCategory = pickTopKey(categoryScores);   // e.g. "Sports" / "Music"
-  const topCountryCode = pickTopKey(countryScores); // e.g. "US" / "GB"
+  const topCategory = pickTopKey(categoryScores);   // e.g. "Film"
+  const topCountryCode = pickTopKey(countryScores); // e.g. "FR"
 
   try {
     let tmEvents = [];
 
-    // ---------- Ticketmaster (live) ----------
-    if (TICKETMASTER_API_KEY) {
+    // 1) Try: topCategory + topCountryCode
+    if (topCategory || topCountryCode) {
       try {
-        const tmRes = await axios.get(
-          "https://app.ticketmaster.com/discovery/v2/events.json",
-          {
-            params: {
-              apikey: TICKETMASTER_API_KEY,
-              size: 30,
-              classificationName: topCategory || undefined,
-              countryCode: topCountryCode || undefined, // if known, else global
-            },
-          }
-        );
-
-        const raw = tmRes.data?._embedded?.events || [];
-        tmEvents = raw.map((e) => {
-          const venue = e._embedded?.venues?.[0];
-          const priceRange = e.priceRanges?.[0];
-
-          return {
-            id: `tm_${e.id}`,
-            source: "ticketmaster",
-            title: e.name,
-            url: e.url,
-            date: e.dates?.start?.localDate || null,
-            time: e.dates?.start?.localTime || null,
-            venue: venue?.name || "",
-            city: venue?.city?.name || "",
-            country: venue?.country?.name || "",
-            countryCode: venue?.country?.countryCode || "",
-            image: e.images?.[0]?.url || null,
-            category: e.classifications?.[0]?.segment?.name || "Event",
-            priceMin: priceRange?.min,
-            priceMax: priceRange?.max,
-            lat: venue?.location?.latitude
-              ? Number(venue.location.latitude)
-              : undefined,
-            lon: venue?.location?.longitude
-              ? Number(venue.location.longitude)
-              : undefined,
-          };
+        tmEvents = await fetchTicketmaster({
+          category: topCategory,
+          countryCode: topCountryCode,
+          size: 30,
         });
-      } catch (err) {
-        console.error(
-          "❌ Ticketmaster LIVE recommend error:",
-          err.response?.status,
-          err.response?.data || err.message
+        console.log(
+          "🎯 TM events for top prefs:",
+          tmEvents.length,
+          { topCategory, topCountryCode }
         );
+      } catch (err) {
+        console.error("❌ TM error (top prefs):", err.message);
       }
-    } else {
-      console.warn("⚠️ TICKETMASTER_API_KEY not set. Skipping Ticketmaster (live).");
     }
 
-    // ---------- Merge ----------
+    // 2) If none, try only country
+    if (!tmEvents.length && topCountryCode) {
+      try {
+        tmEvents = await fetchTicketmaster({
+          category: null,
+          countryCode: topCountryCode,
+          size: 30,
+        });
+        console.log(
+          "🎯 TM events for country only:",
+          tmEvents.length,
+          { topCountryCode }
+        );
+      } catch (err) {
+        console.error("❌ TM error (country only):", err.message);
+      }
+    }
+
+    // 3) If none, try only category
+    if (!tmEvents.length && topCategory) {
+      try {
+        tmEvents = await fetchTicketmaster({
+          category: topCategory,
+          countryCode: null,
+          size: 30,
+        });
+        console.log(
+          "🎯 TM events for category only:",
+          tmEvents.length,
+          { topCategory }
+        );
+      } catch (err) {
+        console.error("❌ TM error (category only):", err.message);
+      }
+    }
+
+    // 4) If still none, fallback to global popular events
+    if (!tmEvents.length) {
+      try {
+        tmEvents = await fetchTicketmaster({
+          category: null,
+          countryCode: null,
+          size: 30,
+        });
+        console.log("🎯 TM fallback global events:", tmEvents.length);
+      } catch (err) {
+        console.error("❌ TM error (fallback):", err.message);
+      }
+    }
+
+    // ---------- Merge & personalise ----------
     let merged = [...tmEvents].sort((a, b) => {
       if (!a.date || !b.date) return 0;
       return new Date(a.date) - new Date(b.date);
     });
 
-    // ---------- Apply AI scoring using user preferences ----------
     const personalised = scoreExternalEventsForUser(user, merged);
+    console.log("🤖 LIVE personalised events count:", personalised.length);
 
     return res.json({ events: personalised });
   } catch (err) {

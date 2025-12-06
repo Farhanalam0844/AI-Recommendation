@@ -1,7 +1,10 @@
 // services/recommendationService.js
 const Event = require("../models/Event");
 const Feedback = require("../models/Feedback");
-
+const {
+  buildFeaturesFromInternalEvent,
+  scorePreferences,
+} = require("./recommenderModel");
 // ---- Helpers for distance ----
 function deg2rad(deg) {
   return (deg * Math.PI) / 180;
@@ -115,47 +118,14 @@ const recommendationService = {
     const countryScores = prefs.countryScores || {};
     const keywordScores = prefs.keywordScores || {}; // reserved for future use
 
-    events.forEach((evt) => {
-      // --- CBF: explicit prefs + behavioural prefs + price match ---
-      let cbfScore = 0;
-
-      // 1) Explicit categories the user selected
-      if (prefs.categories?.length && prefs.categories.includes(evt.category)) {
-        cbfScore += 0.6;
-      }
-
-      // 2) Behavioural category score (from clicks/ratings/searches)
-      if (evt.category && categoryScores[evt.category]) {
-        // keep it between 0–1 by scaling with a constant
-        const w = Math.min(categoryScores[evt.category] / 10, 1);
-        cbfScore += 0.4 * w;
-      }
-
-      // 3) Behavioural country preference (if you store evt.countryCode)
-      if (evt.countryCode && countryScores[evt.countryCode]) {
-        const w = Math.min(countryScores[evt.countryCode] / 10, 1);
-        cbfScore += 0.2 * w;
-      }
-
-      // 4) Price fit (same as before)
-      if (
-        prefs.priceMin != null &&
-        evt.price_min != null &&
-        evt.price_min >= prefs.priceMin
-      ) {
-        cbfScore += 0.1;
-      }
-      if (
-        prefs.priceMax != null &&
-        evt.price_max != null &&
-        evt.price_max <= prefs.priceMax
-      ) {
-        cbfScore += 0.1;
-      }
+      events.forEach((evt) => {
+      // --- CBF score from AI model (user weights · event features) ---
+      const features = buildFeaturesFromInternalEvent(evt);
+      const cbfScore = scorePreferences(user, features);
 
       cbfRaw[evt._id.toString()] = cbfScore;
 
-      // --- Context: distance + time proximity ---
+      // --- Context: distance + time proximity (same as before) ---
       const dist = distanceKm(userLat, userLon, evt.lat, evt.lon);
       let distanceScore = 0;
       if (dist != null) {
@@ -172,17 +142,18 @@ const recommendationService = {
       const contextScore = 0.6 * (distanceScore || 0) + 0.4 * timeScore;
       contextRaw[evt._id.toString()] = contextScore;
 
-      // --- Popularity: from event aggregates ---
+      // --- Popularity: from event aggregates (unchanged) ---
       const avgRating =
         evt.ratingCount > 0 ? evt.ratingSum / evt.ratingCount : 0;
       const clickCount = evt.clickCount || 0;
-     
+
       const popScore =
         0.6 * (avgRating / 5) +
-        0.2 * Math.tanh(clickCount / 10) ;
+        0.2 * Math.tanh(clickCount / 10);
 
       popRaw[evt._id.toString()] = popScore;
     });
+
 
     // ---- 4) Collaborative filtering (CF-lite) using Feedback ----
     // Events current user liked (rating >= 4)

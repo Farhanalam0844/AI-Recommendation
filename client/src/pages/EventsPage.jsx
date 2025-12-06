@@ -49,7 +49,6 @@ export default function EventsPage() {
 
         const url = source === "external" ? "/events/external" : "/events/search";
 
-       
         const res = await api.get(url, { params });
         const data = res.data;
         const list = source === "external" ? data.events || [] : data || [];
@@ -64,42 +63,39 @@ export default function EventsPage() {
     },
     [source, q, category, country]
   );
-// ------------ AI RECOMMENDATIONS (LIVE FROM APIs) ------------
-const fetchRecommended = useCallback(async () => {
-  try {
-    setLoading(true);
-    setError("");
 
-    // 👇 New endpoint: live recommendations using APIs + preferences
-    const res = await api.get("/events/recommend/live", {
-      params: { limit: 30 },
-    });
+  // ------------ AI RECOMMENDATIONS (LIVE FROM APIs) ------------
+  const fetchRecommended = useCallback(async () => {
+    try {
+      setLoading(true);
+      setError("");
 
-    // backend returns: { events: [...] }
-    const data = res.data?.events || [];
+      // New endpoint: live recommendations using APIs + preferences
+      const res = await api.get("/events/recommend/live", {
+        params: { limit: 30 },
+      });
 
-    // Data is already in front-end friendly shape from the route:
-    // { id, title, date, time, venue, city, country, image, category, source, priceMin, priceMax, score, ... }
-    const mapped = data.map((e) => ({
-      ...e,
-      // ensure we always have an id + source for click logging / EventCard
-      id: e.id,
-      source: e.source || "external",
-      score:
-        typeof e.score === "number"
-          ? `AI score: ${e.score.toFixed(2)}`
-          : undefined,
-    }));
+      // backend returns: { events: [...] }
+      const data = res.data?.events || [];
 
-    setEvents(mapped);
-  } catch (err) {
-    console.error("Error fetching recommendations:", err);
-    setError("Could not load AI recommendations. Please try again.");
-  } finally {
-    setLoading(false);
-  }
-}, []);
-;
+      const mapped = data.map((e) => ({
+        ...e,
+        id: e.id,
+        source: e.source || "external",
+        score:
+          typeof e.score === "number"
+            ? `AI score: ${e.score.toFixed(2)}`
+            : undefined,
+      }));
+
+      setEvents(mapped);
+    } catch (err) {
+      console.error("Error fetching recommendations:", err);
+      setError("Could not load AI recommendations. Please try again.");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
   // ------------ CLICK LOGGING (for AI training) ------------
   const handleEventClick = useCallback((event) => {
@@ -134,7 +130,7 @@ const fetchRecommended = useCallback(async () => {
   const handleSearchSubmit = async (e) => {
     e.preventDefault();
 
-    // log search behaviour (still useful for AI, even without price)
+    // log search behaviour (still useful for AI)
     api
       .post("/behavior/search", {
         q,
@@ -237,7 +233,6 @@ const fetchRecommended = useCallback(async () => {
                 >
                   🔄 Refresh recommendations
                 </button>
-                
               </div>
             </div>
           ) : (
