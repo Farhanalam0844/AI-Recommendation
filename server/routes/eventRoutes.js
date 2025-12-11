@@ -122,7 +122,7 @@ function scoreExternalEventsForUser(user, events) {
 }
 
 // helper: call Ticketmaster API and normalise event shape
-async function fetchTicketmaster({ category, countryCode, size = 30 }) {
+async function fetchTicketmaster({ category, countryCode, size = 100 }) {
   if (!TICKETMASTER_API_KEY) return [];
 
   const params = {
@@ -359,7 +359,7 @@ router.get("/recommend/live", auth, async (req, res, next) => {
         tmEvents = await fetchTicketmaster({
           category: topCategory,
           countryCode: topCountryCode,
-          size: 30,
+          size: 100,
         });
         console.log(
           "🎯 TM events for top prefs:",
@@ -377,7 +377,7 @@ router.get("/recommend/live", auth, async (req, res, next) => {
         tmEvents = await fetchTicketmaster({
           category: null,
           countryCode: topCountryCode,
-          size: 30,
+          size: 100,
         });
         console.log(
           "🎯 TM events for country only:",
@@ -395,7 +395,7 @@ router.get("/recommend/live", auth, async (req, res, next) => {
         tmEvents = await fetchTicketmaster({
           category: topCategory,
           countryCode: null,
-          size: 30,
+          size: 100,
         });
         console.log(
           "🎯 TM events for category only:",
@@ -413,7 +413,7 @@ router.get("/recommend/live", auth, async (req, res, next) => {
         tmEvents = await fetchTicketmaster({
           category: null,
           countryCode: null,
-          size: 30,
+          size: 100,
         });
         console.log("🎯 TM fallback global events:", tmEvents.length);
       } catch (err) {
