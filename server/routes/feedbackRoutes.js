@@ -5,7 +5,6 @@ const Feedback = require("../models/Feedback");
 const Event = require("../models/Event");
 const behaviorService = require("../services/behaviorService");
 
-
 const router = express.Router();
 
 // POST /api/feedback
@@ -33,20 +32,17 @@ router.post("/", auth, async (req, res, next) => {
         user: req.user._id,
         event: eventId,
         rating,
-        comment
+        comment,
       });
 
       await Event.findByIdAndUpdate(eventId, {
-        $inc: { ratingSum: rating, ratingCount: 1}
+        $inc: { ratingSum: rating, ratingCount: 1 },
       });
     }
-await behaviorService.logRating(req.user, await Event.findById(eventId).lean(), rating);
-    // Add interaction to user history (optional)
-    req.user.interactions.push({
-      event: eventId,
-      type: "rated"
-    });
-    await req.user.save();
+
+    // ✅ behaviorService already pushes "rated" interaction and saves user
+    const eventDoc = await Event.findById(eventId).lean();
+    await behaviorService.logRating(req.user, eventDoc, rating);
 
     res.status(201).json(feedback);
   } catch (err) {

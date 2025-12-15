@@ -1,10 +1,8 @@
 // services/recommendationService.js
 const Event = require("../models/Event");
 const Feedback = require("../models/Feedback");
-const {
-  buildFeaturesFromInternalEvent,
-  scorePreferences,
-} = require("./recommenderModel");
+const { buildFeaturesFromInternalEvent, scorePreferences } = require("./recommenderModel");
+
 // ---- Helpers for distance ----
 function deg2rad(deg) {
   return (deg * Math.PI) / 180;
@@ -44,9 +42,7 @@ function normalizeMap(map) {
 
   if (max === min) {
     const out = {};
-    for (const k of Object.keys(map)) {
-      out[k] = 0; // all equal, relative differences don't matter
-    }
+    for (const k of Object.keys(map)) out[k] = 0;
     return out;
   }
 
@@ -67,15 +63,30 @@ const recommendationService = {
       start_utc: { $gte: now },
     };
 
+    // Categories filter
     if (prefs.categories?.length) {
       filter.category = { $in: prefs.categories };
     }
 
-    // Price range
-    if (prefs.priceMin != null || prefs.priceMax != null) {
-      filter.price_min = {};
-      if (prefs.priceMin != null) filter.price_min.$gte = prefs.priceMin;
-      if (prefs.priceMax != null) filter.price_min.$lte = prefs.priceMax;
+    // ✅ Price range filter (do NOT accidentally exclude events that have no price_min)
+    // Apply only when user actually set a meaningful range.
+    const userMin = prefs.priceMin;
+    const userMax = prefs.priceMax;
+    const hasMeaningfulPriceRange =
+      (userMin != null && userMin > 0) ||
+      (userMax != null && userMax < 999999);
+
+    if (hasMeaningfulPriceRange) {
+      const range = {};
+      if (userMin != null) range.$gte = userMin;
+      if (userMax != null) range.$lte = userMax;
+
+      // allow missing price_min (Eventbrite often has undefined)
+      filter.$or = [
+        { price_min: { $exists: false } },
+        { price_min: null },
+        { price_min: range },
+      ];
     }
 
     // Time window
@@ -91,7 +102,6 @@ const recommendationService = {
     // ---- 2) Avoid recommending events the user already rated ----
     const ratedEvents = await Feedback.find({ user: user._id }).distinct("event");
     const ratedSet = new Set(ratedEvents.map((id) => id.toString()));
-
     events = events.filter((evt) => !ratedSet.has(evt._id.toString()));
     if (!events.length) return [];
 
@@ -113,19 +123,13 @@ const recommendationService = {
     const nowMs = now.getTime();
     const maxHoursWindow = 24 * 30; // 30 days
 
-    // 🔥 behavioural preference maps (populated by behaviorService)
-    const categoryScores = prefs.categoryScores || {};
-    const countryScores = prefs.countryScores || {};
-    const keywordScores = prefs.keywordScores || {}; // reserved for future use
-
-      events.forEach((evt) => {
-      // --- CBF score from AI model (user weights · event features) ---
+    events.forEach((evt) => {
+      // --- CBF score ---
       const features = buildFeaturesFromInternalEvent(evt);
       const cbfScore = scorePreferences(user, features);
-
       cbfRaw[evt._id.toString()] = cbfScore;
 
-      // --- Context: distance + time proximity (same as before) ---
+      // --- Context: distance + time ---
       const dist = distanceKm(userLat, userLon, evt.lat, evt.lon);
       let distanceScore = 0;
       if (dist != null) {
@@ -142,34 +146,24 @@ const recommendationService = {
       const contextScore = 0.6 * (distanceScore || 0) + 0.4 * timeScore;
       contextRaw[evt._id.toString()] = contextScore;
 
-      // --- Popularity: from event aggregates (unchanged) ---
-      const avgRating =
-        evt.ratingCount > 0 ? evt.ratingSum / evt.ratingCount : 0;
+      // --- Popularity ---
+      const avgRating = evt.ratingCount > 0 ? evt.ratingSum / evt.ratingCount : 0;
       const clickCount = evt.clickCount || 0;
 
-      const popScore =
-        0.6 * (avgRating / 5) +
-        0.2 * Math.tanh(clickCount / 10);
-
+      const popScore = 0.6 * (avgRating / 5) + 0.2 * Math.tanh(clickCount / 10);
       popRaw[evt._id.toString()] = popScore;
     });
 
-
-    // ---- 4) Collaborative filtering (CF-lite) using Feedback ----
-    // Events current user liked (rating >= 4)
+    // ---- 4) Collaborative filtering (CF-lite) ----
     const likedEvents = await Feedback.find({
       user: user._id,
       rating: { $gte: 4 },
     }).distinct("event");
 
     const cfRaw = {};
-    // default zeros
-    events.forEach((evt) => {
-      cfRaw[evt._id.toString()] = 0;
-    });
+    events.forEach((evt) => (cfRaw[evt._id.toString()] = 0));
 
     if (likedEvents.length) {
-      // Find "neighbour" users who also liked these events
       const neighbours = await Feedback.aggregate([
         {
           $match: {
@@ -184,14 +178,8 @@ const recommendationService = {
       if (neighbours.length) {
         const neighbourIds = neighbours.map((n) => n._id);
 
-        // Events liked by neighbours
         const neighbourLikes = await Feedback.aggregate([
-          {
-            $match: {
-              user: { $in: neighbourIds },
-              rating: { $gte: 4 },
-            },
-          },
+          { $match: { user: { $in: neighbourIds }, rating: { $gte: 4 } } },
           { $group: { _id: "$event", count: { $sum: 1 } } },
         ]);
 
@@ -203,7 +191,6 @@ const recommendationService = {
           if (n.count > maxCount) maxCount = n.count;
         });
 
-        // normalise neighbour counts to 0–1
         events.forEach((evt) => {
           const id = evt._id.toString();
           const raw = cfCountMap[id] || 0;
@@ -212,7 +199,7 @@ const recommendationService = {
       }
     }
 
-    // ---- 5) Normalise each signal & combine (hybrid / L2R-style) ----
+    // ---- 5) Normalize + combine ----
     const cbfNorm = normalizeMap(cbfRaw);
     const ctxNorm = normalizeMap(contextRaw);
     const popNorm = normalizeMap(popRaw);
@@ -225,7 +212,6 @@ const recommendationService = {
       const pop = popNorm[id] || 0;
       const cf = cfNorm[id] || 0;
 
-      // You can tune these weights for your experiments / thesis
       const finalScore = 0.4 * cbf + 0.25 * ctx + 0.25 * cf + 0.1 * pop;
 
       return {
@@ -239,7 +225,6 @@ const recommendationService = {
     });
 
     scored.sort((a, b) => b.score - a.score);
-
     return scored.slice(0, limit);
   },
 };

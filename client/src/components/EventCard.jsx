@@ -102,18 +102,7 @@ export default function EventCard({ event, onEventClick }) {
             </p>
           )}
 
-          {/* Price */}
-          {priceLabel ? (
-            <p className="flex items-center gap-1 text-[11px] font-medium text-emerald-700">
-              <span className="text-[13px]">💸</span>
-              <span>{priceLabel}</span>
-            </p>
-          ) : (
-            <p className="flex items-center gap-1 text-[11px] text-slate-400">
-              <span className="text-[13px]">💸</span>
-              <span>Price not available</span>
-            </p>
-          )}
+     
 
           {/* Chips row: category + source type */}
           <div className="mt-1 flex flex-wrap gap-1">

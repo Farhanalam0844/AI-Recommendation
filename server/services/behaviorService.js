@@ -1,9 +1,6 @@
 // services/behaviorService.js
 const Event = require("../models/Event");
 
-// ---- SMALL HELPERS ----
-
-// safely increment a score in preferences
 function incrementPrefScore(prefs, field, key, delta) {
   if (!key) return;
   if (!prefs[field]) prefs[field] = {};
@@ -11,7 +8,6 @@ function incrementPrefScore(prefs, field, key, delta) {
   prefs[field][key] = current + delta;
 }
 
-// very simple keyword tokenizer
 function extractKeywords(q) {
   if (!q) return [];
   return q
@@ -20,15 +16,13 @@ function extractKeywords(q) {
     .filter((t) => t && t.length > 2);
 }
 
-// helper: smooth update for numeric preferences (e.g. budget)
 function smoothUpdate(current, incoming, alpha = 0.3) {
   if (incoming == null || isNaN(incoming)) return current;
   if (current == null || isNaN(current)) return incoming;
   return current * (1 - alpha) + incoming * alpha;
 }
 
-// ---- PRICE CLAMPING TO AVOID CRAZY VALUES ----
-const MAX_REASONABLE_PRICE = 100000; // e.g. 100k
+const MAX_REASONABLE_PRICE = 100000;
 const MIN_REASONABLE_PRICE = 0;
 
 function clampPrice(value) {
@@ -40,11 +34,20 @@ function clampPrice(value) {
   return num;
 }
 
+function normalizeCountryCode(input) {
+  const v = String(input || "").trim();
+  if (!v) return undefined;
+  const low = v.toLowerCase();
+  if (["world", "all", "global"].includes(low)) return undefined;
+  const iso2 = v.toUpperCase();
+  if (!/^[A-Z]{2}$/.test(iso2)) return undefined;
+  return iso2;
+}
+
 const behaviorService = {
   async logSearch(user, { q, category, country, source, minPrice, maxPrice }) {
     const prefs = user.preferences || {};
 
-    // normalise + clamp
     const numericMin = clampPrice(
       typeof minPrice === "number" ? minPrice : minPrice != null ? Number(minPrice) : undefined
     );
@@ -52,113 +55,95 @@ const behaviorService = {
       typeof maxPrice === "number" ? maxPrice : maxPrice != null ? Number(maxPrice) : undefined
     );
 
-    // 1) raw interaction
     user.interactions.push({
       type: "search",
-      meta: {
-        q,
-        category,
-        country,
-        source,
-        minPrice: numericMin,
-        maxPrice: numericMax,
-      },
+      meta: { q, category, country, source, minPrice: numericMin, maxPrice: numericMax },
       createdAt: new Date(),
     });
 
-    // 2) aggregated scores
-    // search keywords (small weight)
     const tokens = extractKeywords(q);
     tokens.forEach((t) => incrementPrefScore(prefs, "keywordScores", t, 0.3));
 
-    // selected category from search filter (medium weight)
     if (category && category !== "All") {
       incrementPrefScore(prefs, "categoryScores", category, 0.5);
     }
 
-    // selected country (geo preference)
-    if (country && country !== "World") {
-      incrementPrefScore(prefs, "countryScores", country, 0.4);
+    // ✅ country learning (ISO2 only)
+    const iso2 = normalizeCountryCode(country);
+    if (iso2) {
+      incrementPrefScore(prefs, "countryScores", iso2, 0.4);
+
+      // ✅ if user searches a specific country, align preferredCountry too
+      // (you can remove this if you only want preferences page to control it)
+      prefs.preferredCountry = iso2;
+
+      // ✅ dampen all other country scores a bit to avoid “Austria stuck forever”
+      const map = prefs.countryScores || {};
+      for (const k of Object.keys(map)) {
+        if (k !== iso2) map[k] *= 0.95;
+      }
+      prefs.countryScores = map;
     }
 
-    // budget preference (smoothly learn user's typical range)
-    if (numericMin != null) {
-      prefs.priceMin = smoothUpdate(prefs.priceMin, numericMin);
-    }
-    if (numericMax != null) {
-      prefs.priceMax = smoothUpdate(prefs.priceMax, numericMax);
-    }
+    if (numericMin != null) prefs.priceMin = smoothUpdate(prefs.priceMin, numericMin);
+    if (numericMax != null) prefs.priceMax = smoothUpdate(prefs.priceMax, numericMax);
 
     user.preferences = prefs;
     user.markModified("preferences");
     await user.save();
   },
 
-  /**
-   * payload: {
-   *   eventId?: string,        // internal Mongo _id
-   *   externalId?: string,     // tm_xxx / eb_xxx
-   *   source?: 'internal' | 'ticketmaster' | 'eventbrite',
-   *   title?: string,
-   *   url?: string,
-   *   category?: string,
-   *   country?: string
-   * }
-   */
   async logEventClick(user, payload) {
-    const { eventId, externalId, source, title, url, category, country } =
-      payload || {};
-
+    const { eventId, externalId, source, title, url, category, country } = payload || {};
     const prefs = user.preferences || {};
 
     let eventDoc = null;
-    if (eventId) {
-      eventDoc = await Event.findById(eventId).lean();
-    }
+    if (eventId) eventDoc = await Event.findById(eventId).lean();
 
     const effectiveCategory = category || eventDoc?.category;
-    const effectiveCountry = country || eventDoc?.countryCode;
 
-    // 1) raw interaction
-    const meta = {
-      source,
-      externalId,
-      title,
-      url,
-      category: effectiveCategory,
-      country: effectiveCountry,
-      provider: eventDoc?.provider,
-    };
+    // ✅ normalize click country (external events should send countryCode)
+    const effectiveCountry = normalizeCountryCode(country) || normalizeCountryCode(eventDoc?.countryCode);
 
     user.interactions.push({
       type: "click",
       event: eventDoc?._id || undefined,
-      meta,
+      meta: {
+        source,
+        externalId,
+        title,
+        url,
+        category: effectiveCategory,
+        country: effectiveCountry,
+        provider: eventDoc?.provider,
+      },
       createdAt: new Date(),
     });
 
-    // 2) preference updates
-    // strong signal that user cares about this category / country
-    if (effectiveCategory) {
-      incrementPrefScore(prefs, "categoryScores", effectiveCategory, 1.0);
-    }
+    if (effectiveCategory) incrementPrefScore(prefs, "categoryScores", effectiveCategory, 1.0);
 
     if (effectiveCountry) {
       incrementPrefScore(prefs, "countryScores", effectiveCountry, 0.7);
+
+      // ✅ align preferredCountry to clicked country (strong signal)
+      prefs.preferredCountry = effectiveCountry;
+
+      // ✅ dampen others
+      const map = prefs.countryScores || {};
+      for (const k of Object.keys(map)) {
+        if (k !== effectiveCountry) map[k] *= 0.97;
+      }
+      prefs.countryScores = map;
     }
 
-    // optional: learn keywords from title
     if (title) {
-      extractKeywords(title).forEach((t) =>
-        incrementPrefScore(prefs, "keywordScores", t, 0.5)
-      );
+      extractKeywords(title).forEach((t) => incrementPrefScore(prefs, "keywordScores", t, 0.5));
     }
 
     user.preferences = prefs;
     user.markModified("preferences");
     await user.save();
   },
-
 
   async logRating(user, event, rating) {
     const prefs = user.preferences || {};
@@ -170,15 +155,10 @@ const behaviorService = {
       createdAt: new Date(),
     });
 
-    // positive ratings → boost category & keywords harder
-    const weight =
-      rating >= 4 ? 1.5 : rating >= 3 ? 0.5 : rating <= 2 ? -0.5 : 0;
+    const weight = rating >= 4 ? 1.5 : rating >= 3 ? 0.5 : rating <= 2 ? -0.5 : 0;
 
-    if (event.category) {
-      incrementPrefScore(prefs, "categoryScores", event.category, weight);
-    }
+    if (event.category) incrementPrefScore(prefs, "categoryScores", event.category, weight);
 
-    // optional: use title tokens as keywords
     if (event.title) {
       extractKeywords(event.title).forEach((t) =>
         incrementPrefScore(prefs, "keywordScores", t, weight * 0.3)

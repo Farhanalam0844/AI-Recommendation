@@ -11,18 +11,43 @@ import {
   Chip,
   Stack,
   Snackbar,
-  Alert
+  Alert,
 } from "@mui/material";
 import api from "../services/api";
 
-const defaultPreferences = {
-  location: "",
-  maxDistanceKm: 10,
-  budgetLevel: "medium",
-  categories: ["music", "tech"],
-  crowdSize: "any",
-  indoorOutdoor: "any"
-};
+const COUNTRY_OPTIONS = [
+  { value: "US", label: "🇺🇸 United States" },
+  { value: "CA", label: "🇨🇦 Canada" },
+  { value: "GB", label: "🇬🇧 United Kingdom" },
+  { value: "AU", label: "🇦🇺 Australia" },
+  { value: "NZ", label: "🇳🇿 New Zealand" },
+  { value: "IE", label: "🇮🇪 Ireland" },
+  { value: "DE", label: "🇩🇪 Germany" },
+  { value: "FR", label: "🇫🇷 France" },
+  { value: "NL", label: "🇳🇱 Netherlands" },
+  { value: "ES", label: "🇪🇸 Spain" },
+  { value: "IT", label: "🇮🇹 Italy" },
+  { value: "SE", label: "🇸🇪 Sweden" },
+  { value: "NO", label: "🇳🇴 Norway" },
+  { value: "DK", label: "🇩🇰 Denmark" },
+  { value: "CH", label: "🇨🇭 Switzerland" },
+  { value: "AT", label: "🇦🇹 Austria" },
+  { value: "BE", label: "🇧🇪 Belgium" },
+  { value: "AE", label: "🇦🇪 United Arab Emirates" },
+  { value: "SA", label: "🇸🇦 Saudi Arabia" },
+  { value: "ZA", label: "🇿🇦 South Africa" },
+  { value: "IN", label: "🇮🇳 India" },
+  { value: "PK", label: "🇵🇰 Pakistan" },
+  { value: "BD", label: "🇧🇩 Bangladesh" },
+  { value: "SG", label: "🇸🇬 Singapore" },
+  { value: "MY", label: "🇲🇾 Malaysia" },
+  { value: "TH", label: "🇹🇭 Thailand" },
+  { value: "PH", label: "🇵🇭 Philippines" },
+  { value: "JP", label: "🇯🇵 Japan" },
+  { value: "KR", label: "🇰🇷 South Korea" },
+  { value: "BR", label: "🇧🇷 Brazil" },
+  { value: "MX", label: "🇲🇽 Mexico" },
+];
 
 const categoriesOptions = [
   "music",
@@ -32,8 +57,14 @@ const categoriesOptions = [
   "networking",
   "family",
   "art",
-  "education"
+  "education",
 ];
+
+// ✅ Only keep what you want
+const defaultPreferences = {
+  preferredCountry: "AU", // change default if you want
+  categories: ["music", "tech"],
+};
 
 const PreferencesPage = () => {
   const [prefs, setPrefs] = useState(defaultPreferences);
@@ -45,7 +76,19 @@ const PreferencesPage = () => {
     api
       .get("/preferences")
       .then((res) => {
-        if (res.data) setPrefs({ ...defaultPreferences, ...res.data });
+        if (res.data) {
+          // Keep only these two fields from backend response
+          setPrefs({
+            ...defaultPreferences,
+            preferredCountry:
+              res.data.preferredCountry ??
+              res.data.location ?? // ✅ if your backend still uses "location" for country
+              defaultPreferences.preferredCountry,
+            categories: Array.isArray(res.data.categories)
+              ? res.data.categories
+              : defaultPreferences.categories,
+          });
+        }
       })
       .catch(() => {})
       .finally(() => setLoading(false));
@@ -63,7 +106,7 @@ const PreferencesPage = () => {
         ...p,
         categories: exists
           ? p.categories.filter((c) => c !== category)
-          : [...p.categories, category]
+          : [...p.categories, category],
       };
     });
   };
@@ -71,7 +114,15 @@ const PreferencesPage = () => {
   const handleSave = async () => {
     setLoading(true);
     try {
-      await api.put("/preferences", prefs); // adjust to POST if your backend is different
+      // ✅ Send only preferredCountry + categories
+      await api.put("/preferences", {
+        preferredCountry: prefs.preferredCountry,
+        categories: prefs.categories,
+      });
+
+      // If your backend expects "location" instead of "preferredCountry", use this instead:
+      // await api.put("/preferences", { location: prefs.preferredCountry, categories: prefs.categories });
+
       setSaved(true);
     } catch (err) {
       console.error(err);
@@ -86,8 +137,7 @@ const PreferencesPage = () => {
         Your Preferences
       </Typography>
       <Typography variant="body2" color="text.secondary" gutterBottom>
-        Tune these preferences to get better, personalised event
-        recommendations.
+        Choose your preferred country and categories to improve recommendations.
       </Typography>
 
       <Grid container spacing={3} sx={{ mt: 1 }}>
@@ -95,74 +145,25 @@ const PreferencesPage = () => {
           <Card sx={{ borderRadius: 3 }}>
             <CardContent>
               <Grid container spacing={2}>
-                <Grid item xs={12} sm={6}>
-                  <TextField
-                    label="Preferred Location"
-                    name="location"
-                    value={prefs.location}
-                    onChange={handleChange}
-                    fullWidth
-                    placeholder="Melbourne, Sydney, online..."
-                  />
-                </Grid>
-                <Grid item xs={12} sm={6}>
-                  <TextField
-                    label="Max Distance (km)"
-                    name="maxDistanceKm"
-                    type="number"
-                    value={prefs.maxDistanceKm}
-                    onChange={handleChange}
-                    fullWidth
-                    inputProps={{ min: 1 }}
-                  />
-                </Grid>
-
+                {/* Preferred Country */}
                 <Grid item xs={12} sm={6}>
                   <TextField
                     select
-                    label="Budget level"
-                    name="budgetLevel"
-                    value={prefs.budgetLevel}
+                    label="Preferred country"
+                    name="preferredCountry"
+                    value={prefs.preferredCountry}
                     onChange={handleChange}
                     fullWidth
                   >
-                    <MenuItem value="low">Low</MenuItem>
-                    <MenuItem value="medium">Medium</MenuItem>
-                    <MenuItem value="high">High</MenuItem>
+                    {COUNTRY_OPTIONS.map((opt) => (
+                      <MenuItem key={opt.value} value={opt.value}>
+                        {opt.label}
+                      </MenuItem>
+                    ))}
                   </TextField>
                 </Grid>
 
-                <Grid item xs={12} sm={6}>
-                  <TextField
-                    select
-                    label="Crowd size"
-                    name="crowdSize"
-                    value={prefs.crowdSize}
-                    onChange={handleChange}
-                    fullWidth
-                  >
-                    <MenuItem value="small">Small & cosy</MenuItem>
-                    <MenuItem value="medium">Medium</MenuItem>
-                    <MenuItem value="large">Big events</MenuItem>
-                    <MenuItem value="any">Doesn't matter</MenuItem>
-                  </TextField>
-                </Grid>
-
-                <Grid item xs={12}>
-                  <TextField
-                    select
-                    label="Indoor / outdoor"
-                    name="indoorOutdoor"
-                    value={prefs.indoorOutdoor}
-                    onChange={handleChange}
-                    fullWidth
-                  >
-                    <MenuItem value="indoor">Indoor</MenuItem>
-                    <MenuItem value="outdoor">Outdoor</MenuItem>
-                    <MenuItem value="any">No preference</MenuItem>
-                  </TextField>
-                </Grid>
-
+                {/* Categories */}
                 <Grid item xs={12}>
                   <Typography
                     variant="subtitle2"
@@ -189,6 +190,7 @@ const PreferencesPage = () => {
                   </Stack>
                 </Grid>
 
+                {/* Save */}
                 <Grid item xs={12} textAlign="right">
                   <Button
                     variant="contained"

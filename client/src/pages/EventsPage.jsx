@@ -1,4 +1,4 @@
-// src/pages/Search.jsx (or EventsPage.jsx)
+// src/pages/Search.jsx
 import React, { useEffect, useState, useCallback } from "react";
 import EventCard from "../components/EventCard";
 import api from "../services/api";
@@ -21,6 +21,31 @@ const COUNTRY_OPTIONS = [
   { value: "CA", label: "🇨🇦 Canada" },
   { value: "DE", label: "🇩🇪 Germany" },
   { value: "FR", label: "🇫🇷 France" },
+  { value: "NZ", label: "🇳🇿 New Zealand" },
+  { value: "IE", label: "🇮🇪 Ireland" },
+  { value: "NL", label: "🇳🇱 Netherlands" },
+  { value: "ES", label: "🇪🇸 Spain" },
+  { value: "IT", label: "🇮🇹 Italy" },
+  { value: "SE", label: "🇸🇪 Sweden" },
+  { value: "NO", label: "🇳🇴 Norway" },
+  { value: "DK", label: "🇩🇰 Denmark" },
+  { value: "CH", label: "🇨🇭 Switzerland" },
+  { value: "AT", label: "🇦🇹 Austria" },
+  { value: "BE", label: "🇧🇪 Belgium" },
+  { value: "AE", label: "🇦🇪 United Arab Emirates" },
+  { value: "SA", label: "🇸🇦 Saudi Arabia" },
+  { value: "ZA", label: "🇿🇦 South Africa" },
+  { value: "IN", label: "🇮🇳 India" },
+  { value: "PK", label: "🇵🇰 Pakistan" },
+  { value: "BD", label: "🇧🇩 Bangladesh" },
+  { value: "SG", label: "🇸🇬 Singapore" },
+  { value: "MY", label: "🇲🇾 Malaysia" },
+  { value: "TH", label: "🇹🇭 Thailand" },
+  { value: "PH", label: "🇵🇭 Philippines" },
+  { value: "JP", label: "🇯🇵 Japan" },
+  { value: "KR", label: "🇰🇷 South Korea" },
+  { value: "BR", label: "🇧🇷 Brazil" },
+  { value: "MX", label: "🇲🇽 Mexico" },
 ];
 
 export default function EventsPage() {
@@ -34,25 +59,24 @@ export default function EventsPage() {
   const [source] = useState("external");
   const [error, setError] = useState("");
 
-  // ------------ LIVE SEARCH ------------
   const fetchEvents = useCallback(
-    async ({ trigger = "initial" } = {}) => {
+    async () => {
       try {
         setLoading(true);
         setError("");
 
         const params = {};
-
         if (q.trim()) params.q = q.trim();
         if (category && category !== "All") params.category = category;
-        if (country && country !== "World") params.country = country;
+
+        // ✅ always send country, including "World"
+        if (country) params.country = country;
 
         const url = source === "external" ? "/events/external" : "/events/search";
-
         const res = await api.get(url, { params });
+
         const data = res.data;
         const list = source === "external" ? data.events || [] : data || [];
-
         setEvents(list);
       } catch (err) {
         console.error("Error fetching events:", err);
@@ -64,28 +88,19 @@ export default function EventsPage() {
     [source, q, category, country]
   );
 
-  // ------------ AI RECOMMENDATIONS (LIVE FROM APIs) ------------
   const fetchRecommended = useCallback(async () => {
     try {
       setLoading(true);
       setError("");
 
-      // New endpoint: live recommendations using APIs + preferences
-      const res = await api.get("/events/recommend/live", {
-        params: { limit: 30 },
-      });
-
-      // backend returns: { events: [...] }
+      const res = await api.get("/events/recommend/live", { params: { limit: 30 } });
       const data = res.data?.events || [];
 
       const mapped = data.map((e) => ({
         ...e,
         id: e.id,
         source: e.source || "external",
-        score:
-          typeof e.score === "number"
-            ? `AI score: ${e.score.toFixed(2)}`
-            : undefined,
+        score: typeof e.score === "number" ? `AI score: ${e.score.toFixed(2)}` : undefined,
       }));
 
       setEvents(mapped);
@@ -97,31 +112,24 @@ export default function EventsPage() {
     }
   }, []);
 
-  // ------------ CLICK LOGGING (for AI training) ------------
+  // ✅ important: include country on click payload so learning works
   const handleEventClick = useCallback((event) => {
     const payload = {
-      eventId:
-        event._id || (event.source === "internal" ? event.id : undefined),
-      externalId:
-        event.source !== "internal" ? event.id || event.externalId : undefined,
+      eventId: event._id || (event.source === "internal" ? event.id : undefined),
+      externalId: event.source !== "internal" ? event.id || event.externalId : undefined,
       source: event.source,
       title: event.title,
       url: event.url,
       category: event.category,
+      country: event.countryCode || event.country, // ✅ key fix
     };
 
-    api.post("/behavior/click", payload).catch(() => {
-      // fire-and-forget – we don't block UI
-    });
+    api.post("/behavior/click", payload).catch(() => {});
   }, []);
 
-  // ------------ useEffect to load depending on mode ------------
   useEffect(() => {
-    if (mode === "ai") {
-      fetchRecommended();
-    } else {
-      fetchEvents({ trigger: "filter-change" });
-    }
+    if (mode === "ai") fetchRecommended();
+    else fetchEvents();
   }, [mode, fetchEvents, fetchRecommended]);
 
   const handleCategoryChange = (e) => setCategory(e.target.value);
@@ -130,27 +138,19 @@ export default function EventsPage() {
   const handleSearchSubmit = async (e) => {
     e.preventDefault();
 
-    // log search behaviour (still useful for AI)
-    api
-      .post("/behavior/search", {
-        q,
-        category,
-        country,
-        source: mode === "live" ? "external" : "ai",
-      })
-      .catch(() => {});
+    api.post("/behavior/search", {
+      q,
+      category,
+      country,
+      source: mode === "live" ? "external" : "ai",
+    }).catch(() => {});
 
-    if (mode === "live") {
-      fetchEvents({ trigger: "text-search" });
-    } else {
-      fetchRecommended();
-    }
+    if (mode === "live") fetchEvents();
+    else fetchRecommended();
   };
 
   const resultsLabel =
-    events.length === 0
-      ? "No events"
-      : `${events.length} event${events.length > 1 ? "s" : ""}`;
+    events.length === 0 ? "No events" : `${events.length} event${events.length > 1 ? "s" : ""}`;
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950">
@@ -168,20 +168,17 @@ export default function EventsPage() {
             <p className="mt-1 text-sm text-slate-300">
               {mode === "ai"
                 ? "Personalised events based on your behaviour, preferences and feedback."
-                : "Search across live events from Ticketmaster & Eventbrite with powerful filters."}
+                : "Search across live events from Ticketmaster with powerful filters."}
             </p>
           </div>
 
-          {/* Mode toggle */}
           <div className="flex flex-col items-end gap-2">
             <div className="inline-flex rounded-full border border-slate-700 bg-slate-900/80 p-1 text-xs font-medium shadow-sm backdrop-blur">
               <button
                 type="button"
                 onClick={() => setMode("ai")}
                 className={`px-3 py-1.5 rounded-full transition-all ${
-                  mode === "ai"
-                    ? "bg-emerald-500 text-slate-900 shadow"
-                    : "text-slate-300 hover:text-slate-50"
+                  mode === "ai" ? "bg-emerald-500 text-slate-900 shadow" : "text-slate-300 hover:text-slate-50"
                 }`}
               >
                 AI Recommended
@@ -190,226 +187,112 @@ export default function EventsPage() {
                 type="button"
                 onClick={() => setMode("live")}
                 className={`px-3 py-1.5 rounded-full transition-all ${
-                  mode === "live"
-                    ? "bg-indigo-500 text-slate-900 shadow"
-                    : "text-slate-300 hover:text-slate-50"
+                  mode === "live" ? "bg-indigo-500 text-slate-900 shadow" : "text-slate-300 hover:text-slate-50"
                 }`}
               >
                 Live Search
               </button>
             </div>
-            <p className="text-[11px] text-slate-400">
-              Mode:{" "}
-              <span className="font-semibold text-slate-200">
-                {mode === "ai" ? "AI recommendations" : "Real-time external API"}
-              </span>
-            </p>
           </div>
         </header>
 
-        {/* Filters / Info */}
         <section className="mb-4 rounded-2xl border border-slate-800 bg-slate-900/80 p-4 shadow-xl shadow-black/40 backdrop-blur">
-          {mode === "ai" ? (
-            <div className="flex flex-col gap-2 text-sm text-slate-200">
-              <p>
-                These recommendations use your{" "}
-                <span className="font-semibold text-emerald-300">
-                  Preferences
-                </span>{" "}
-                (categories, distance, etc.) and behaviour (searches, clicks).
-              </p>
-              <p className="text-xs text-slate-400">
-                Update your preferences on the{" "}
-                <span className="font-semibold text-slate-200">
-                  Preferences
-                </span>{" "}
-                page to steer the AI towards different types of events.
-              </p>
-              <div className="mt-2 flex flex-wrap items-center gap-2">
-                <button
-                  type="button"
-                  onClick={fetchRecommended}
-                  className="inline-flex items-center justify-center gap-1 rounded-full bg-emerald-500 px-4 py-2 text-xs font-semibold text-slate-900 shadow-sm hover:bg-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-400 focus:ring-offset-1 focus:ring-offset-slate-900"
-                >
-                  🔄 Refresh recommendations
-                </button>
-              </div>
-            </div>
-          ) : (
+          {mode === "live" ? (
             <form
               onSubmit={handleSearchSubmit}
               className="flex flex-col gap-3 md:flex-row md:flex-wrap md:items-end"
             >
-              {/* Search */}
               <div className="flex-1 min-w-[220px]">
-                <label
-                  htmlFor="search"
-                  className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-400"
-                >
+                <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-400">
                   Search by keyword
                 </label>
-                <div className="flex rounded-xl border border-slate-700 bg-slate-900/70 px-3 py-2 focus-within:border-indigo-400 focus-within:ring-1 focus-within:ring-indigo-400">
-                  <span className="mr-2 mt-[1px] text-slate-500 text-sm">
-                    🔍
-                  </span>
+                <div className="flex rounded-xl border border-slate-700 bg-slate-900/70 px-3 py-2">
                   <input
-                    id="search"
                     type="text"
                     value={q}
                     onChange={(e) => setQ(e.target.value)}
-                    placeholder="e.g. music festival, coding meetup, comedy show..."
+                    placeholder="e.g. music festival..."
                     className="block w-full bg-transparent text-sm text-slate-50 placeholder:text-slate-500 focus:outline-none"
                   />
                 </div>
               </div>
 
-              {/* Category */}
               <div className="w-full md:w-48">
-                <label
-                  htmlFor="category"
-                  className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-400"
-                >
+                <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-400">
                   Category
                 </label>
                 <select
-                  id="category"
                   value={category}
                   onChange={handleCategoryChange}
-                  className="block w-full rounded-xl border border-slate-700 bg-slate-900/70 px-3 py-2 text-sm text-slate-50 focus:border-indigo-400 focus:outline-none focus:ring-1 focus:ring-indigo-400"
+                  className="block w-full rounded-xl border border-slate-700 bg-slate-900/70 px-3 py-2 text-sm text-slate-50"
                 >
                   {CATEGORY_OPTIONS.map((opt) => (
-                    <option key={opt.value} value={opt.value}>
-                      {opt.label}
-                    </option>
+                    <option key={opt.value} value={opt.value}>{opt.label}</option>
                   ))}
                 </select>
-                <p className="mt-1 text-[11px] text-slate-500">
-                  Category updates results instantly.
-                </p>
               </div>
 
-              {/* Country */}
               <div className="w-full md:w-48">
-                <label
-                  htmlFor="country"
-                  className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-400"
-                >
+                <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-400">
                   Country
                 </label>
                 <select
-                  id="country"
                   value={country}
                   onChange={handleCountryChange}
-                  className="block w-full rounded-xl border border-slate-700 bg-slate-900/70 px-3 py-2 text-sm text-slate-50 focus:border-indigo-400 focus:outline-none focus:ring-1 focus:ring-indigo-400"
+                  className="block w-full rounded-xl border border-slate-700 bg-slate-900/70 px-3 py-2 text-sm text-slate-50"
                 >
                   {COUNTRY_OPTIONS.map((opt) => (
-                    <option key={opt.value} value={opt.value}>
-                      {opt.label}
-                    </option>
+                    <option key={opt.value} value={opt.value}>{opt.label}</option>
                   ))}
                 </select>
-                <p className="mt-1 text-[11px] text-slate-500">
-                  World = events from any country.
-                </p>
               </div>
 
-              {/* Search button */}
               <div className="flex w-full items-end justify-start md:w-auto">
                 <button
                   type="submit"
-                  className="inline-flex w-full items-center justify-center gap-1 rounded-xl bg-indigo-500 px-4 py-2.5 text-sm font-semibold text-slate-900 shadow-sm hover:bg-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:ring-offset-1 focus:ring-offset-slate-900 md:w-auto"
+                  className="inline-flex w-full items-center justify-center rounded-xl bg-indigo-500 px-4 py-2.5 text-sm font-semibold text-slate-900 md:w-auto"
                 >
-                  Search events
-                  <span className="text-base">✨</span>
+                  Search
                 </button>
               </div>
             </form>
-          )}
-        </section>
-
-        {/* Active filters / stats */}
-        <section className="mb-4 flex flex-wrap items-center justify-between gap-3">
-          <div className="flex flex-wrap items-center gap-2 text-[11px]">
-            <span className="rounded-full bg-slate-900/80 px-3 py-1 text-slate-300 ring-1 ring-slate-700">
-              {resultsLabel}
-            </span>
-            {mode === "live" && (
-              <>
-                {q.trim() && (
-                  <span className="rounded-full bg-slate-900/60 px-3 py-1 text-slate-300 ring-1 ring-slate-800">
-                    🔎 Query:{" "}
-                    <span className="font-medium text-slate-50">{q}</span>
-                  </span>
-                )}
-                {category !== "All" && (
-                  <span className="rounded-full bg-slate-900/60 px-3 py-1 text-slate-300 ring-1 ring-slate-800">
-                    🎭 Category:{" "}
-                    <span className="font-medium text-slate-50">
-                      {category}
-                    </span>
-                  </span>
-                )}
-                {country !== "World" && (
-                  <span className="rounded-full bg-slate-900/60 px-3 py-1 text-slate-300 ring-1 ring-slate-800">
-                    🌐 Country:{" "}
-                    <span className="font-medium text-slate-50">
-                      {country}
-                    </span>
-                  </span>
-                )}
-              </>
-            )}
-          </div>
-        </section>
-
-        {/* Results */}
-        <section>
-          {error && (
-            <div className="mb-4 rounded-xl border border-red-500/40 bg-red-950/60 px-3 py-2 text-sm text-red-100">
-              {error}
-            </div>
-          )}
-
-          {loading ? (
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              {Array.from({ length: 6 }).map((_, i) => (
-                <div
-                  key={i}
-                  className="animate-pulse rounded-2xl border border-slate-800 bg-slate-900/80 shadow-sm"
-                >
-                  <div className="aspect-[16/9] w-full bg-slate-800" />
-                  <div className="space-y-3 p-4">
-                    <div className="h-4 w-3/4 rounded bg-slate-800" />
-                    <div className="h-3 w-1/2 rounded bg-slate-800" />
-                    <div className="h-3 w-2/3 rounded bg-slate-800" />
-                    <div className="h-8 w-24 rounded-full bg-slate-800" />
-                  </div>
-                </div>
-              ))}
-            </div>
-          ) : events.length === 0 ? (
-            <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-slate-800 bg-slate-900/70 px-6 py-12 text-center">
-              <p className="text-sm font-medium text-slate-100">
-                No events found.
-              </p>
-              <p className="mt-1 text-xs text-slate-400">
-                {mode === "ai"
-                  ? "Try refreshing recommendations or adjusting your preferences."
-                  : "Try a different keyword, category, or country."}
-              </p>
-            </div>
           ) : (
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              {events.map((event) => (
-                <EventCard
-                  key={event.id || event._id}
-                  event={event}
-                  onEventClick={handleEventClick}
-                />
-              ))}
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={fetchRecommended}
+                className="rounded-full bg-emerald-500 px-4 py-2 text-xs font-semibold text-slate-900"
+              >
+                🔄 Refresh recommendations
+              </button>
+              <span className="text-xs text-slate-400">{resultsLabel}</span>
             </div>
           )}
         </section>
+
+        {error && (
+          <div className="mb-4 rounded-xl border border-red-500/40 bg-red-950/60 px-3 py-2 text-sm text-red-100">
+            {error}
+          </div>
+        )}
+
+        {loading ? (
+          <div className="text-slate-300">Loading…</div>
+        ) : events.length === 0 ? (
+          <div className="rounded-2xl border border-dashed border-slate-800 bg-slate-900/70 px-6 py-12 text-center text-slate-200">
+            No events found.
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {events.map((event) => (
+              <EventCard
+                key={event.id || event._id}
+                event={event}
+                onEventClick={handleEventClick}
+              />
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );

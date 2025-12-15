@@ -5,9 +5,17 @@ const preferenceSchema = new mongoose.Schema(
   {
     categories: [String],
     location: { type: String },
+
+    // ✅ Explicit hard override (persists in DB)
+    preferredCountry: { type: String }, // ISO2 like "AU", "GB"
+
     maxDistanceKm: { type: Number, default: 50 },
+
+    // Keep defaults if you want, but internal recommender will no longer
+    // accidentally filter-out price-less events (fixed in recommendationService)
     priceMin: { type: Number, default: 0 },
     priceMax: { type: Number, default: 999999 },
+
     startDate: { type: Date },
     endDate: { type: Date },
 
@@ -36,9 +44,7 @@ const interactionSchema = new mongoose.Schema(
       enum: ["view", "click", "rated", "search"],
       required: true,
     },
-    meta: {
-      type: Object, // flexible payload (query, filters, source)
-    },
+    meta: { type: Object },
     createdAt: { type: Date, default: Date.now },
   },
   { _id: false }
