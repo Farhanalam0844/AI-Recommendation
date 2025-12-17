@@ -12,28 +12,49 @@ function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
 }
 
-function buildFeaturesFromInternalEvent(evt) {
-  const category = evt.category || "Other";
-  const country = evt.countryCode || evt.country || "World";
-  const title = evt.title || evt.name || "";
-  const description = evt.description || "";
-  const price = evt.price_min ?? evt.price_max ?? 0;
-
-  const keywords = Array.from(new Set([...tokenize(title), ...tokenize(description)]));
-
-  return { category, country, price, keywords };
+function normalizeIso2(input) {
+  const v = String(input || "").trim().toUpperCase();
+  if (!v) return null;
+  if (!/^[A-Z]{2}$/.test(v)) return null;
+  if (["WORLD", "ALL", "GLOBAL"].includes(v)) return null;
+  return v;
 }
 
-function buildFeaturesFromExternalEvent(evt) {
+// ✅ Internal DB events (Event model)
+function buildFeaturesFromInternalEvent(evt) {
   const category = evt.category || "Other";
-  const country = evt.countryCode || evt.country || "World";
-  const title = evt.title || "";
+  const countryCode = normalizeIso2(evt.countryCode) || null;
+  const countryName = evt.country ? String(evt.country) : null;
+
+  const title = evt.title || evt.name || "";
   const description = evt.description || "";
-  const price = evt.priceMin ?? evt.priceMax ?? 0;
+  const price = evt.price_min ?? evt.price_max ?? null;
 
   const keywords = Array.from(new Set([...tokenize(title), ...tokenize(description)]));
 
-  return { category, country, price, keywords };
+  return { category, countryCode, countryName, price, keywords };
+}
+
+// ✅ External (Ticketmaster mapped objects)
+function buildFeaturesFromExternalEvent(evt) {
+  const category = evt.category || "Other";
+  const countryCode = normalizeIso2(evt.countryCode) || null;
+  const countryName = evt.country ? String(evt.country) : null;
+
+  const title = evt.title || "";
+  const description = evt.description || "";
+
+  // ✅ supports BOTH naming conventions
+  const price =
+    evt.priceMin ??
+    evt.priceMax ??
+    evt.price_min ??
+    evt.price_max ??
+    null;
+
+  const keywords = Array.from(new Set([...tokenize(title), ...tokenize(description)]));
+
+  return { category, countryCode, countryName, price, keywords };
 }
 
 function scorePreferences(user, features) {
@@ -44,33 +65,31 @@ function scorePreferences(user, features) {
 
   let score = 0;
 
-  // 0) ✅ Hard preference: preferredCountry (override old learning)
-  const preferred = prefs.preferredCountry ? String(prefs.preferredCountry).toUpperCase() : null;
-  const evtCountry = features.country ? String(features.country).toUpperCase() : null;
+  // 0) Hard preference: preferredCountry (ONLY if user explicitly set it in preferences)
+  const preferred = normalizeIso2(prefs.preferredCountry);
+  const evtCC = features.countryCode;
 
-  if (preferred && evtCountry) {
-    if (evtCountry === preferred) score += 3.0;     // strong boost
-    else score -= 0.5;                              // small penalty
+  if (preferred && evtCC) {
+    if (evtCC === preferred) score += 3.0;
+    else score -= 0.5;
   }
 
   // 1) Category
-  const catW = categoryScores[features.category] || 0;
-  score += catW * 1;
+  score += (categoryScores[features.category] || 0) * 1.0;
 
-  // 2) Country learned weights (still useful, but not dominant now)
-  const countryW = countryScores[features.country] || 0;
-  score += countryW * 0.4;
+  // 2) Country learned weights (ISO2 only)
+  if (evtCC) {
+    score += (countryScores[evtCC] || 0) * 0.4;
+  }
 
   // 3) Keywords
   let kwSum = 0;
   for (const kw of features.keywords || []) {
     if (keywordScores[kw]) kwSum += keywordScores[kw];
   }
-  if (kwSum > 0) {
-    score += Math.min(kwSum / 5, 1) * 0.8;
-  }
+  if (kwSum > 0) score += Math.min(kwSum / 5, 1) * 0.8;
 
-  // 4) Budget fit (safe if you don’t send min/max; it’ll just not add much)
+  // 4) Budget fit (only if price known)
   const priceMin = prefs.priceMin ?? 0;
   const priceMax = prefs.priceMax ?? 0;
 
@@ -79,8 +98,7 @@ function scorePreferences(user, features) {
     const mid = (priceMin + priceMax) / 2;
     const range = priceMax - priceMin || 1;
     const distFromMid = Math.abs(p - mid) / range;
-    const priceScore = 1 - distFromMid * 2;
-    score += priceScore;
+    score += 1 - distFromMid * 2;
   }
 
   return score;

@@ -2,16 +2,22 @@
 const axios = require("axios");
 const Event = require("../models/Event");
 
+function toDateOrNull(v) {
+  if (!v) return null;
+  const d = new Date(v);
+  return isNaN(d.getTime()) ? null : d;
+}
+
 async function fetchEventbriteEvents() {
   const url = "https://www.eventbriteapi.com/v3/events/search/";
   const params = {
     "location.address": "Melbourne",
-    "expand": "venue",
-    "sort_by": "date"
+    expand: "venue",
+    sort_by: "date",
   };
 
   const headers = {
-    Authorization: `Bearer ${process.env.EVENTBRITE_API_KEY}`
+    Authorization: `Bearer ${process.env.EVENTBRITE_API_KEY}`,
   };
 
   const res = await axios.get(url, { params, headers });
@@ -23,7 +29,7 @@ async function fetchTicketmasterEvents() {
   const params = {
     apikey: process.env.TICKETMASTER_API_KEY,
     city: "Birmingham",
-    countryCode: "UK"
+    countryCode: "UK",
   };
 
   const res = await axios.get(url, { params });
@@ -32,20 +38,39 @@ async function fetchTicketmasterEvents() {
 }
 
 function mapEventbriteEvent(e) {
+  const venue = e.venue || {};
+  const addr = venue.address || {};
+
+  // Eventbrite sometimes gives country as full name (localized_country_name),
+  // not ISO2. If ISO2 isn't present, store full name in `country`.
+  const countryName =
+    addr.localized_country_name ||
+    addr.country ||
+    undefined;
+
   return {
     provider: "Eventbrite",
     event_id: e.id,
-    title: e.name?.text,
+    title: e.name?.text || "Untitled",
     description: e.description?.text,
-    start_utc: e.start?.utc,
-    end_utc: e.end?.utc,
-    venue_name: e.venue?.name,
-    lat: e.venue?.address?.latitude ? Number(e.venue.address.latitude) : undefined,
-    lon: e.venue?.address?.longitude ? Number(e.venue.address.longitude) : undefined,
-    category: e.category_id,
-    price_min: undefined, // Eventbrite price info is separate – simplified here
+
+    start_utc: toDateOrNull(e.start?.utc),
+    end_utc: toDateOrNull(e.end?.utc),
+
+    venue_name: venue?.name,
+    city: addr.city || undefined,
+    country: countryName,
+    countryCode: undefined, // usually not provided by Eventbrite in this expand
+
+    lat: addr.latitude ? Number(addr.latitude) : undefined,
+    lon: addr.longitude ? Number(addr.longitude) : undefined,
+
+    category: e.category_id ? String(e.category_id) : undefined,
+
+    price_min: undefined,
     price_max: undefined,
-    url: e.url
+
+    url: e.url,
   };
 }
 
@@ -56,23 +81,33 @@ function mapTicketmasterEvent(e) {
   return {
     provider: "Ticketmaster",
     event_id: e.id,
-    title: e.name,
+    title: e.name || "Untitled",
     description: e.info || e.pleaseNote,
-    start_utc: e.dates?.start?.dateTime,
-    end_utc: undefined,
+
+    start_utc: toDateOrNull(e.dates?.start?.dateTime),
+    end_utc: null,
+
     venue_name: venue?.name,
+    city: venue?.city?.name || undefined,
+    country: venue?.country?.name || undefined,
+    countryCode: venue?.country?.countryCode || undefined,
+
     lat: venue?.location?.latitude ? Number(venue.location.latitude) : undefined,
     lon: venue?.location?.longitude ? Number(venue.location.longitude) : undefined,
-    category: e.classifications?.[0]?.segment?.name,
+
+    category: e.classifications?.[0]?.segment?.name || undefined,
+
     price_min: priceRange?.min,
     price_max: priceRange?.max,
-    url: venue?.url || e.url
+
+    url: e.url,
   };
 }
 
 async function upsertEvents(mappedEvents) {
   for (const evt of mappedEvents) {
     if (!evt.event_id || !evt.provider) continue;
+    if (!evt.start_utc) continue; // ✅ schema requires Date
 
     await Event.findOneAndUpdate(
       { provider: evt.provider, event_id: evt.event_id },
@@ -95,9 +130,9 @@ const ingestionService = {
 
     return {
       eventbriteCount: mappedEb.length,
-      ticketmasterCount: mappedTm.length
+      ticketmasterCount: mappedTm.length,
     };
-  }
+  },
 };
 
 module.exports = ingestionService;

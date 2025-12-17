@@ -54,7 +54,7 @@ function normalizeMap(map) {
 }
 
 const recommendationService = {
-  async recommendForUser(user, limit = 20) {
+  async recommendForUser(user, limit = 100) {
     const prefs = user.preferences || {};
     const now = new Date();
 

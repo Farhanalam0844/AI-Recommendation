@@ -44,6 +44,27 @@ function normalizeCountryCode(input) {
   return iso2;
 }
 
+function normalizeCategory(input) {
+  const v = String(input || "").trim();
+  if (!v) return undefined;
+  if (["all", "All", "ALL"].includes(v)) return undefined;
+  return v;
+}
+
+// ✅ Unified preference updates
+function setPreferredCountry(prefs, iso2) {
+  if (!iso2) return;
+  // make live behaviour behave exactly like manual override
+  prefs.preferredCountry = iso2;
+}
+
+function setCategoriesFromSingle(prefs, category) {
+  if (!category) return;
+  // make live behaviour behave exactly like manual categories
+  // (manual is array; live gives a single category)
+  prefs.categories = [category];
+}
+
 const behaviorService = {
   async logSearch(user, { q, category, country, source, minPrice, maxPrice }) {
     const prefs = user.preferences || {};
@@ -61,30 +82,34 @@ const behaviorService = {
       createdAt: new Date(),
     });
 
+    // keyword learning
     const tokens = extractKeywords(q);
     tokens.forEach((t) => incrementPrefScore(prefs, "keywordScores", t, 0.3));
 
-    if (category && category !== "All") {
-      incrementPrefScore(prefs, "categoryScores", category, 0.5);
+    // category learning + ✅ unify to manual field
+    const cat = normalizeCategory(category);
+    if (cat) {
+      incrementPrefScore(prefs, "categoryScores", cat, 0.5);
+      setCategoriesFromSingle(prefs, cat);
     }
 
-    // ✅ country learning (ISO2 only)
+    // country learning + ✅ unify to manual field
     const iso2 = normalizeCountryCode(country);
     if (iso2) {
       incrementPrefScore(prefs, "countryScores", iso2, 0.4);
 
-      // ✅ if user searches a specific country, align preferredCountry too
-      // (you can remove this if you only want preferences page to control it)
-      prefs.preferredCountry = iso2;
-
-      // ✅ dampen all other country scores a bit to avoid “Austria stuck forever”
+      // mild dampening so one old country doesn’t dominate forever
       const map = prefs.countryScores || {};
       for (const k of Object.keys(map)) {
-        if (k !== iso2) map[k] *= 0.95;
+        if (k !== iso2) map[k] *= 0.97;
       }
       prefs.countryScores = map;
+
+      // ✅ make live behaviour behave like manual override
+      setPreferredCountry(prefs, iso2);
     }
 
+    // price learning
     if (numericMin != null) prefs.priceMin = smoothUpdate(prefs.priceMin, numericMin);
     if (numericMax != null) prefs.priceMax = smoothUpdate(prefs.priceMax, numericMax);
 
@@ -100,10 +125,11 @@ const behaviorService = {
     let eventDoc = null;
     if (eventId) eventDoc = await Event.findById(eventId).lean();
 
-    const effectiveCategory = category || eventDoc?.category;
+    const effectiveCategory = normalizeCategory(category || eventDoc?.category);
 
-    // ✅ normalize click country (external events should send countryCode)
-    const effectiveCountry = normalizeCountryCode(country) || normalizeCountryCode(eventDoc?.countryCode);
+    // normalize click country (external events should send ISO2 countryCode)
+    const effectiveCountry =
+      normalizeCountryCode(country) || normalizeCountryCode(eventDoc?.countryCode);
 
     user.interactions.push({
       type: "click",
@@ -120,22 +146,28 @@ const behaviorService = {
       createdAt: new Date(),
     });
 
-    if (effectiveCategory) incrementPrefScore(prefs, "categoryScores", effectiveCategory, 1.0);
+    // category learning + ✅ unify to manual field
+    if (effectiveCategory) {
+      incrementPrefScore(prefs, "categoryScores", effectiveCategory, 1.0);
+      setCategoriesFromSingle(prefs, effectiveCategory);
+    }
 
+    // country learning + ✅ unify to manual field
     if (effectiveCountry) {
       incrementPrefScore(prefs, "countryScores", effectiveCountry, 0.7);
 
-      // ✅ align preferredCountry to clicked country (strong signal)
-      prefs.preferredCountry = effectiveCountry;
-
-      // ✅ dampen others
+      // mild dampening of others
       const map = prefs.countryScores || {};
       for (const k of Object.keys(map)) {
-        if (k !== effectiveCountry) map[k] *= 0.97;
+        if (k !== effectiveCountry) map[k] *= 0.98;
       }
       prefs.countryScores = map;
+
+      // ✅ make live behaviour behave like manual override
+      setPreferredCountry(prefs, effectiveCountry);
     }
 
+    // title keywords
     if (title) {
       extractKeywords(title).forEach((t) => incrementPrefScore(prefs, "keywordScores", t, 0.5));
     }
@@ -157,7 +189,11 @@ const behaviorService = {
 
     const weight = rating >= 4 ? 1.5 : rating >= 3 ? 0.5 : rating <= 2 ? -0.5 : 0;
 
-    if (event.category) incrementPrefScore(prefs, "categoryScores", event.category, weight);
+    if (event.category) {
+      incrementPrefScore(prefs, "categoryScores", event.category, weight);
+      // ✅ unify categories too (rating is a strong preference signal)
+      if (weight > 0) setCategoriesFromSingle(prefs, event.category);
+    }
 
     if (event.title) {
       extractKeywords(event.title).forEach((t) =>

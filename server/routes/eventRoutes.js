@@ -1,14 +1,10 @@
-// backend/routes/eventRoutes.js
 const express = require("express");
 const axios = require("axios");
 const auth = require("../middleware/auth");
 const Event = require("../models/Event");
 const recommendationService = require("../services/recommendationService");
 const behaviorService = require("../services/behaviorService");
-const {
-  buildFeaturesFromExternalEvent,
-  scorePreferences,
-} = require("../services/recommenderModel");
+const { buildFeaturesFromExternalEvent, scorePreferences } = require("../services/recommenderModel");
 
 const router = express.Router();
 
@@ -17,46 +13,15 @@ console.log("🚀 TICKETMASTER_API_KEY loaded?", !!TICKETMASTER_API_KEY);
 
 // -------------------- WORLD (Multi-country) Settings --------------------
 const WORLD_COUNTRY_CODES = [
-  "US",
-  "CA",
-  "GB",
-  "AU",
-  "NZ",
-  "IE",
-  "DE",
-  "FR",
-  "NL",
-  "ES",
-  "IT",
-  "SE",
-  "NO",
-  "DK",
-  "CH",
-  "AT",
-  "BE",
-  "AE",
-  "SA",
-  "ZA",
-  "IN",
-  "PK",
-  "BD",
-  "SG",
-  "MY",
-  "TH",
-  "PH",
-  "JP",
-  "KR",
-  "BR",
-  "MX",
+  "US","CA","GB","AU","NZ","IE","DE","FR","NL","ES","IT","SE","NO","DK","CH","AT","BE",
+  "AE","SA","ZA","IN","PK","BD","SG","MY","TH","PH","JP","KR","BR","MX",
 ];
 
 function normalizeCountryCode(input) {
   const v = String(input || "").trim();
   if (!v) return undefined;
-
   const low = v.toLowerCase();
   if (["world", "all", "global"].includes(low)) return undefined;
-
   const iso2 = v.toUpperCase();
   if (!/^[A-Z]{2}$/.test(iso2)) return undefined;
   return iso2;
@@ -70,17 +35,11 @@ function isWorldMode(input) {
 
 function distanceKm(lat1, lon1, lat2, lon2) {
   if (
-    lat1 == null ||
-    lon1 == null ||
-    lat2 == null ||
-    lon2 == null ||
-    !Number.isFinite(lat1) ||
-    !Number.isFinite(lon1) ||
-    !Number.isFinite(lat2) ||
-    !Number.isFinite(lon2)
-  ) {
-    return null;
-  }
+    lat1 == null || lon1 == null || lat2 == null || lon2 == null ||
+    !Number.isFinite(lat1) || !Number.isFinite(lon1) ||
+    !Number.isFinite(lat2) || !Number.isFinite(lon2)
+  ) return null;
+
   const R = 6371;
   const toRad = (d) => (d * Math.PI) / 180;
   const dLat = toRad(lat2 - lat1);
@@ -114,8 +73,10 @@ function scoreExternalEventsForUser(user, events) {
   const userLat = Number.isFinite(user.lat) ? user.lat : null;
   const userLon = Number.isFinite(user.lon) ? user.lon : null;
 
-  const maxDistanceKm = prefs.maxDistanceKm || 50;
-  const maxHoursWindow = 24 * 30;
+  const maxDistanceKmPref = Number.isFinite(prefs.maxDistanceKm) ? prefs.maxDistanceKm : 50;
+  const maxDistanceKm = maxDistanceKmPref > 0 ? maxDistanceKmPref : 50;
+
+  const maxHoursWindow = 24 * 30; // 30 days
 
   return events
     .map((evt) => {
@@ -124,12 +85,7 @@ function scoreExternalEventsForUser(user, events) {
 
       let ctxScore = 0;
 
-      if (
-        evt.lat != null &&
-        evt.lon != null &&
-        userLat != null &&
-        userLon != null
-      ) {
+      if (evt.lat != null && evt.lon != null && userLat != null && userLon != null) {
         const d = distanceKm(userLat, userLon, evt.lat, evt.lon);
         if (d != null && d <= maxDistanceKm) {
           ctxScore += 0.4 * (1 - d / maxDistanceKm);
@@ -185,11 +141,7 @@ async function fetchTicketmaster({ keyword, category, countryCode, size = 100 })
   const iso2 = normalizeCountryCode(countryCode);
   if (iso2) params.countryCode = iso2;
 
-  const tmRes = await axios.get(
-    "https://app.ticketmaster.com/discovery/v2/events.json",
-    { params }
-  );
-
+  const tmRes = await axios.get("https://app.ticketmaster.com/discovery/v2/events.json", { params });
   const raw = tmRes.data?._embedded?.events || [];
   return raw.map(mapTicketmasterEvent);
 }
@@ -198,12 +150,7 @@ async function fetchTicketmasterWorld({ keyword, category, sizePerCountry = 50 }
   if (!TICKETMASTER_API_KEY) return [];
 
   const calls = WORLD_COUNTRY_CODES.map((cc) =>
-    fetchTicketmaster({
-      keyword,
-      category,
-      countryCode: cc,
-      size: sizePerCountry,
-    }).catch((err) => {
+    fetchTicketmaster({ keyword, category, countryCode: cc, size: sizePerCountry }).catch((err) => {
       console.warn("⚠️ TM world fetch failed:", cc, err.response?.status || err.message);
       return [];
     })
@@ -280,8 +227,6 @@ router.get("/external", auth, async (req, res, next) => {
       return new Date(a.date) - new Date(b.date);
     });
 
-    // Budget filter stays here if you still use it; you said you removed budget from UI,
-    // but this route can keep it safely (it does nothing if min/max not sent).
     if (numericMin != null || numericMax != null) {
       merged = merged.filter((evt) => {
         if (evt.priceMin == null && evt.priceMax == null) return false;
@@ -303,11 +248,9 @@ router.get("/external", auth, async (req, res, next) => {
 });
 
 // -------------------------------------------------------------------
-// GET /api/events/recommend/live  ✅ FIX: prefer preferredCountry
-// -------------------------------------------------------------------
-// -------------------------------------------------------------------
 // GET /api/events/recommend/live
-// ✅ True AI behavior: fetch WORLD candidates first, then rank by prefs
+// ✅ True AI: WORLD candidates + ranking by preferences
+// ✅ Guarantees preferredCountry representation
 // -------------------------------------------------------------------
 router.get("/recommend/live", auth, async (req, res, next) => {
   console.log("🔥 /events/recommend/live for user", req.user.email);
@@ -316,60 +259,79 @@ router.get("/recommend/live", auth, async (req, res, next) => {
   const prefs = user.preferences || {};
 
   const categoryScores = prefs.categoryScores || {};
-  const countryScores = prefs.countryScores || {};
+  const topLearnedCategory = pickTopKey(categoryScores);
 
-  const topCategory = pickTopKey(categoryScores);
+  // ✅ fallback to manual categories if no behaviour yet
+  const manualCategory =
+    Array.isArray(prefs.categories) && prefs.categories.length ? String(prefs.categories[0]) : null;
 
-  // Hard override (if set) - used as a strong BOOST in scoring, not as a fetch filter
-  const preferredCountry =
-    prefs.preferredCountry || pickTopKey(countryScores) || null;
+  const topCategory = topLearnedCategory || manualCategory || null;
+
+  const preferredCountry = prefs.preferredCountry || null;
+  const prefISO2 = preferredCountry ? String(preferredCountry).toUpperCase() : null;
 
   try {
-    // 1) Fetch broad pool (WORLD) so model can actually choose
+    // 1) Fetch broad pool (WORLD)
     let tmEvents = [];
     try {
       tmEvents = await fetchTicketmasterWorld({
         keyword: undefined,
-        category: topCategory || null, // use top category to keep pool relevant
+        category: topCategory,
         sizePerCountry: 30,
       });
     } catch (err) {
       console.error("❌ TM error (WORLD):", err.message);
     }
 
-    // 2) If world returned nothing, fallback to single fetch without country
+    // 2) Guarantee preferred country presence (small extra fetch)
+    let prefEvents = [];
+    if (prefISO2) {
+      try {
+        prefEvents = await fetchTicketmaster({
+          keyword: undefined,
+          category: topCategory,
+          countryCode: prefISO2,
+          size: 80,
+        });
+      } catch (err) {
+        console.error("❌ TM error (pref country fetch):", err.message);
+      }
+    }
+
+    // 3) Fallback if world empty
     if (!tmEvents.length) {
       try {
         tmEvents = await fetchTicketmaster({
           keyword: undefined,
-          category: topCategory || null,
+          category: topCategory,
           countryCode: null,
-          size: 100,
+          size: 120,
         });
       } catch (err) {
         console.error("❌ TM error (fallback):", err.message);
       }
     }
 
-    // 3) Ensure preferredCountry is applied strongly during scoring
-    // (scorePreferences already uses prefs.preferredCountry)
-    if (preferredCountry) {
-      user.preferences = user.preferences || {};
-      user.preferences.preferredCountry = preferredCountry;
-    }
+    // 4) Merge + dedupe
+    let merged = [...tmEvents, ...prefEvents];
+    const seen = new Set();
+    merged = merged.filter((e) => {
+      if (!e?.id) return false;
+      if (seen.has(e.id)) return false;
+      seen.add(e.id);
+      return true;
+    });
 
-    // sort by date then score
-    let merged = [...tmEvents].sort((a, b) => {
+    // 5) Sort by date then score
+    merged.sort((a, b) => {
       if (!a.date || !b.date) return 0;
       return new Date(a.date) - new Date(b.date);
     });
 
     const personalised = scoreExternalEventsForUser(user, merged);
 
-    // OPTIONAL (recommended): diversify results so top 20 isn't all one country
-    // Keep top 5 from preferred country, then fill remaining with best others
-    const limit = Number(req.query.limit) || 20;
-    const prefISO2 = preferredCountry ? String(preferredCountry).toUpperCase() : null;
+    // 6) Diversify output (optional): keep top N from preferred country
+    const limit = Number(req.query.limit) || 100;
 
     if (prefISO2) {
       const fromPref = [];
@@ -381,9 +343,11 @@ router.get("/recommend/live", auth, async (req, res, next) => {
         else fromOther.push(e);
       }
 
+      // ✅ make preferred country visible, but not 100% locked
+      const prefCount = Math.min(8, Math.ceil(limit * 0.4)); // up to 40% preferred
       const out = [
-        ...fromPref.slice(0, 5),
-        ...fromOther.slice(0, Math.max(0, limit - 5)),
+        ...fromPref.slice(0, prefCount),
+        ...fromOther.slice(0, Math.max(0, limit - prefCount)),
       ];
 
       return res.json({ events: out.slice(0, limit) });
@@ -395,13 +359,12 @@ router.get("/recommend/live", auth, async (req, res, next) => {
   }
 });
 
-
 // -------------------------------------------------------------------
 // Internal DB recommend (unchanged)
 // -------------------------------------------------------------------
 router.get("/recommend/me", auth, async (req, res, next) => {
   try {
-    const limit = Number(req.query.limit) || 20;
+    const limit = Number(req.query.limit) || 100;
     const recommendations = await recommendationService.recommendForUser(req.user, limit);
     res.json(recommendations);
   } catch (err) {
