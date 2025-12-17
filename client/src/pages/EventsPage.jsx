@@ -1,4 +1,3 @@
-// src/pages/Search.jsx
 import React, { useEffect, useState, useCallback } from "react";
 import EventCard from "../components/EventCard";
 import api from "../services/api";
@@ -41,7 +40,7 @@ const COUNTRY_OPTIONS = [
   { value: "SG", label: "🇸🇬 Singapore" },
   { value: "MY", label: "🇲🇾 Malaysia" },
   { value: "TH", label: "🇹🇭 Thailand" },
-  { value: "PH", label: "🇵🇭 Philippines" },
+  { value: "PH", label: "🇹🇭 Philippines" },
   { value: "JP", label: "🇯🇵 Japan" },
   { value: "KR", label: "🇰🇷 South Korea" },
   { value: "BR", label: "🇧🇷 Brazil" },
@@ -88,18 +87,19 @@ export default function EventsPage() {
     [source, q, category, country]
   );
 
+  // ✅ AI TAB must call live/world recommender
   const fetchRecommended = useCallback(async () => {
     try {
       setLoading(true);
       setError("");
 
-      const res = await api.get("/events/recommend/live", { params: { limit: 30 } });
+      const res = await api.get("/events/recommend/live", { params: { limit: 100 } });
       const data = res.data?.events || [];
 
       const mapped = data.map((e) => ({
         ...e,
         id: e.id,
-        source: e.source || "external",
+        source: e.source || "ticketmaster",
         score: typeof e.score === "number" ? `AI score: ${e.score.toFixed(2)}` : undefined,
       }));
 
@@ -112,8 +112,13 @@ export default function EventsPage() {
     }
   }, []);
 
-  // ✅ important: include country on click payload so learning works
+  // ✅ click logging FIX: send ISO2 ONLY (never country name like "Australia")
   const handleEventClick = useCallback((event) => {
+    const iso2Country =
+      typeof event?.countryCode === "string" && /^[A-Z]{2}$/.test(event.countryCode)
+        ? event.countryCode
+        : undefined;
+
     const payload = {
       eventId: event._id || (event.source === "internal" ? event.id : undefined),
       externalId: event.source !== "internal" ? event.id || event.externalId : undefined,
@@ -121,7 +126,7 @@ export default function EventsPage() {
       title: event.title,
       url: event.url,
       category: event.category,
-      country: event.countryCode || event.country, // ✅ key fix
+      country: iso2Country, // ✅ FIX
     };
 
     api.post("/behavior/click", payload).catch(() => {});
@@ -155,7 +160,6 @@ export default function EventsPage() {
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950">
       <div className="mx-auto max-w-6xl px-4 py-8">
-        {/* Header */}
         <header className="mb-6 flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
           <div>
             <div className="inline-flex items-center gap-2 rounded-full bg-emerald-500/10 px-3 py-1 text-[11px] font-medium text-emerald-300 ring-1 ring-emerald-500/30 mb-2">
@@ -178,7 +182,9 @@ export default function EventsPage() {
                 type="button"
                 onClick={() => setMode("ai")}
                 className={`px-3 py-1.5 rounded-full transition-all ${
-                  mode === "ai" ? "bg-emerald-500 text-slate-900 shadow" : "text-slate-300 hover:text-slate-50"
+                  mode === "ai"
+                    ? "bg-emerald-500 text-slate-900 shadow"
+                    : "text-slate-300 hover:text-slate-50"
                 }`}
               >
                 AI Recommended
@@ -187,7 +193,9 @@ export default function EventsPage() {
                 type="button"
                 onClick={() => setMode("live")}
                 className={`px-3 py-1.5 rounded-full transition-all ${
-                  mode === "live" ? "bg-indigo-500 text-slate-900 shadow" : "text-slate-300 hover:text-slate-50"
+                  mode === "live"
+                    ? "bg-indigo-500 text-slate-900 shadow"
+                    : "text-slate-300 hover:text-slate-50"
                 }`}
               >
                 Live Search
@@ -227,7 +235,9 @@ export default function EventsPage() {
                   className="block w-full rounded-xl border border-slate-700 bg-slate-900/70 px-3 py-2 text-sm text-slate-50"
                 >
                   {CATEGORY_OPTIONS.map((opt) => (
-                    <option key={opt.value} value={opt.value}>{opt.label}</option>
+                    <option key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </option>
                   ))}
                 </select>
               </div>
@@ -242,7 +252,9 @@ export default function EventsPage() {
                   className="block w-full rounded-xl border border-slate-700 bg-slate-900/70 px-3 py-2 text-sm text-slate-50"
                 >
                   {COUNTRY_OPTIONS.map((opt) => (
-                    <option key={opt.value} value={opt.value}>{opt.label}</option>
+                    <option key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </option>
                   ))}
                 </select>
               </div>

@@ -60,9 +60,8 @@ const categoriesOptions = [
   "education",
 ];
 
-// ✅ Only keep what you want
 const defaultPreferences = {
-  preferredCountry: "AU", // change default if you want
+  preferredCountry: "AU",
   categories: ["music", "tech"],
 };
 
@@ -77,13 +76,9 @@ const PreferencesPage = () => {
       .get("/preferences")
       .then((res) => {
         if (res.data) {
-          // Keep only these two fields from backend response
           setPrefs({
             ...defaultPreferences,
-            preferredCountry:
-              res.data.preferredCountry ??
-              res.data.location ?? // ✅ if your backend still uses "location" for country
-              defaultPreferences.preferredCountry,
+            preferredCountry: res.data.preferredCountry ?? defaultPreferences.preferredCountry,
             categories: Array.isArray(res.data.categories)
               ? res.data.categories
               : defaultPreferences.categories,
@@ -114,15 +109,10 @@ const PreferencesPage = () => {
   const handleSave = async () => {
     setLoading(true);
     try {
-      // ✅ Send only preferredCountry + categories
       await api.put("/preferences", {
         preferredCountry: prefs.preferredCountry,
         categories: prefs.categories,
       });
-
-      // If your backend expects "location" instead of "preferredCountry", use this instead:
-      // await api.put("/preferences", { location: prefs.preferredCountry, categories: prefs.categories });
-
       setSaved(true);
     } catch (err) {
       console.error(err);
@@ -145,7 +135,6 @@ const PreferencesPage = () => {
           <Card sx={{ borderRadius: 3 }}>
             <CardContent>
               <Grid container spacing={2}>
-                {/* Preferred Country */}
                 <Grid item xs={12} sm={6}>
                   <TextField
                     select
@@ -163,13 +152,8 @@ const PreferencesPage = () => {
                   </TextField>
                 </Grid>
 
-                {/* Categories */}
                 <Grid item xs={12}>
-                  <Typography
-                    variant="subtitle2"
-                    color="text.secondary"
-                    gutterBottom
-                  >
+                  <Typography variant="subtitle2" color="text.secondary" gutterBottom>
                     Favourite categories
                   </Typography>
                   <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
@@ -190,7 +174,6 @@ const PreferencesPage = () => {
                   </Stack>
                 </Grid>
 
-                {/* Save */}
                 <Grid item xs={12} textAlign="right">
                   <Button
                     variant="contained"
@@ -207,11 +190,7 @@ const PreferencesPage = () => {
         </Grid>
       </Grid>
 
-      <Snackbar
-        open={saved}
-        autoHideDuration={2500}
-        onClose={() => setSaved(false)}
-      >
+      <Snackbar open={saved} autoHideDuration={2500} onClose={() => setSaved(false)}>
         <Alert severity="success" variant="filled">
           Preferences saved!
         </Alert>
