@@ -58,6 +58,22 @@ export default function EventsPage() {
   const [source] = useState("external");
   const [error, setError] = useState("");
 
+  // ✅ LIVE SEARCH: remove any score-like fields so EventCard can't show them
+  const stripScoresForLive = (evt) => {
+    const e = evt || {};
+    // Remove common ranking/score fields (safe even if they don't exist)
+    const {
+      score,
+      aiScore,
+      similarity,
+      rank,
+      finalScore,
+      normalizedScore,
+      ...rest
+    } = e;
+    return rest;
+  };
+
   const fetchEvents = useCallback(
     async () => {
       try {
@@ -67,8 +83,6 @@ export default function EventsPage() {
         const params = {};
         if (q.trim()) params.q = q.trim();
         if (category && category !== "All") params.category = category;
-
-        // ✅ always send country, including "World"
         if (country) params.country = country;
 
         const url = source === "external" ? "/events/external" : "/events/search";
@@ -76,7 +90,10 @@ export default function EventsPage() {
 
         const data = res.data;
         const list = source === "external" ? data.events || [] : data || [];
-        setEvents(list);
+
+        // ✅ IMPORTANT FIX: actually use cleaned list
+        const cleaned = list.map(stripScoresForLive);
+        setEvents(cleaned);
       } catch (err) {
         console.error("Error fetching events:", err);
         setError("Could not load events. Please try again.");
@@ -96,12 +113,16 @@ export default function EventsPage() {
       const res = await api.get("/events/recommend/live", { params: { limit: 100 } });
       const data = res.data?.events || [];
 
-      const mapped = data.map((e) => ({
-        ...e,
-        id: e.id,
-        source: e.source || "ticketmaster",
-        score: typeof e.score === "number" ? `AI score: ${e.score.toFixed(2)}` : undefined,
-      }));
+      const mapped = data.map((e) => {
+        const s = Number(e.score);
+        return {
+          ...e,
+          id: e.id,
+          source: e.source || "ticketmaster",
+          // ✅ AI score formatted to 3 decimals (ONLY for AI tab)
+          score: Number.isFinite(s) ? `AI score: ${s.toFixed(3)}` : undefined,
+        };
+      });
 
       setEvents(mapped);
     } catch (err) {
@@ -126,7 +147,7 @@ export default function EventsPage() {
       title: event.title,
       url: event.url,
       category: event.category,
-      country: iso2Country, // ✅ FIX
+      country: iso2Country,
     };
 
     api.post("/behavior/click", payload).catch(() => {});
